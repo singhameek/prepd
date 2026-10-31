@@ -2,7 +2,7 @@
 const MODEL='nvidia/nemotron-3.5-lightning:free';
 const SYSTEM=`You convert recipe ingredient text into JSON. Reply with ONLY a JSON object, no prose, no code fences:
 {"ingredients":[{"canonical_name":"lowercase singular name","metric_quantity":number,"metric_unit":"g"|"ml"|"pcs","ui_fractional_display":"friendly amount like '~9/10ths of a jug', '¾ full', 'half a block'","estimated_macros":{"calories":number,"protein":number,"carbs":number,"fat":number}}]}
-Convert vague amounts (splash, handful, pinch) to realistic metric estimates. Use pcs for countable items. Macros are for the whole quantity listed.`;
+Include EVERY ingredient as its own array item, even when several are on one line or separated by commas, 'and', or spaces. Convert vague amounts (splash, handful, pinch) to realistic metric estimates. Use pcs for countable items. Macros are for the whole quantity listed.`;
 const hits=new Map();
 module.exports=async(req,res)=>{
   if(req.method==='GET')return res.status(200).json({ok:true,keySet:!!process.env.OPENROUTER_API_KEY});
@@ -16,7 +16,7 @@ module.exports=async(req,res)=>{
   try{
     const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',
       headers:{Authorization:`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json'},
-      body:JSON.stringify({model:MODEL,temperature:0,max_tokens:2500,response_format:{type:'json_object'},
+      body:JSON.stringify({model:MODEL,temperature:0,max_tokens:8000,response_format:{type:'json_object'},reasoning:{effort:'low'},
         messages:[{role:'system',content:SYSTEM},{role:'user',content:text}]})});
     const body=await r.text();
     if(!r.ok){let msg;try{const e=JSON.parse(body).error;msg=e?.message||e}catch{}
