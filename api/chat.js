@@ -5,6 +5,7 @@ const SYSTEM=`You convert recipe ingredient text into JSON. Reply with ONLY a JS
 Convert vague amounts (splash, handful, pinch) to realistic metric estimates. Use pcs for countable items. Macros are for the whole quantity listed.`;
 const hits=new Map();
 module.exports=async(req,res)=>{
+  if(req.method==='GET')return res.status(200).json({ok:true,keySet:!!process.env.OPENROUTER_API_KEY});
   if(req.method!=='POST')return res.status(405).json({error:'POST only'});
   const ip=(req.headers['x-forwarded-for']||'').split(',')[0]||'x',now=Date.now();
   const h=(hits.get(ip)||[]).filter(t=>now-t<36e5);
@@ -17,6 +18,10 @@ module.exports=async(req,res)=>{
       headers:{Authorization:`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json'},
       body:JSON.stringify({model:MODEL,temperature:0,max_tokens:2500,response_format:{type:'json_object'},
         messages:[{role:'system',content:SYSTEM},{role:'user',content:text}]})});
-    res.status(r.status).setHeader('Content-Type','application/json').send(await r.text());
+    const body=await r.text();
+    if(!r.ok){let msg;try{const e=JSON.parse(body).error;msg=e?.message||e}catch{}
+      console.error('OpenRouter',r.status,body.slice(0,500));
+      return res.status(502).json({error:`AI service error (${r.status}): ${String(msg||'unknown').slice(0,200)}`})}
+    res.status(200).setHeader('Content-Type','application/json').send(body);
   }catch{res.status(502).json({error:'Service unreachable. Try again.'})}
 };

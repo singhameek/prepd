@@ -2,7 +2,8 @@
 export async function parseIngredients(text){
   const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
   const j=await res.json().catch(()=>({}));
-  if(!res.ok)throw new Error(j.error||`Service error (${res.status}). Try again.`);
+  if(res.status===404&&!j.error)throw new Error('AI endpoint not found (/api/chat). The server function is not deployed.');
+  if(!res.ok)throw new Error(typeof j.error==='string'?j.error:`Service error (${res.status}). Try again.`);
   const raw=j.choices?.[0]?.message?.content||'';
   const m=raw.match(/\{[\s\S]*\}/);
   let o;try{o=JSON.parse(m?m[0]:raw)}catch{throw new Error('Could not read that. Try listing one ingredient per line.')}
