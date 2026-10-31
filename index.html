@@ -1,0 +1,28 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f7a5c"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icon.svg">
+<title>SmartKitchen</title>
+<style>
+:root{--bg:#eef2f0;--ink:#14201b;--mute:#5d6b65;--acc:#1f7a5c;--warn:#b4531a;--glass:rgba(255,255,255,.65);--line:rgba(20,32,27,.1);font:100%/1.5 system-ui,-apple-system,sans-serif}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1714;--ink:#e8efeb;--mute:#8fa097;--acc:#4cc59a;--warn:#f08a4b;--glass:rgba(30,44,38,.6);--line:rgba(255,255,255,.1)}}
+@media(prefers-reduced-transparency:reduce){:root{--glass:var(--bg)}.bar,header{backdrop-filter:none!important}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);padding:0 1rem 6rem;max-width:42rem;margin-inline:auto}
+header{position:sticky;top:0;z-index:5;padding:calc(env(safe-area-inset-top) + .75rem) 0 .5rem;background:var(--glass);backdrop-filter:blur(20px) saturate(180%);margin:0 -1rem;padding-inline:1rem}
+h1{font-size:2rem;line-height:1.05;letter-spacing:-.02em;margin:0}h2{font-size:1.1rem;margin:1.5rem 0 .5rem;letter-spacing:-.01em}
+.sum{color:var(--mute);font-size:.9rem}
+.row{display:flex;gap:.75rem;align-items:center;padding:.75rem 0;border-bottom:1px solid var(--line)}.row>div{flex:1;min-width:0}
+.bar-t{height:.5rem;border-radius:1rem;background:var(--line);overflow:hidden;margin-top:.4rem}
+.bar-f{height:100%;background:var(--acc);border-radius:1rem;transition:width .4s cubic-bezier(.2,.9,.3,1)}.low{background:var(--warn)}
+button,input,textarea,select{font:inherit;color:inherit}
+button{border:0;border-radius:.75rem;padding:.55rem .9rem;background:var(--acc);color:#fff;font-weight:600;cursor:pointer;transition:transform .1s}
+button:active{transform:scale(.96)}button.g{background:var(--line);color:var(--ink)}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+input,textarea,select{width:100%;padding:.6rem .75rem;border-radius:.75rem;border:1px solid var(--line);background:var(--glass)}
+textarea{min-height:10rem}.f{display:flex;gap:.5rem;margin:.5rem 0}.f>*{flex:1}
+nav.bar{position:fixed;inset:auto 0 0;display:flex;justify-content:space-around;padding:.5rem .5rem calc(env(safe-area-inset-bottom) + .5rem);background:var(--glass);backdrop-filter:blur(20px) saturate(180%);border-top:1px solid var(--line)}
+nav.bar button{background:none;color:var(--mute);padding:.4rem .6rem}nav.bar button.on{color:var(--acc)}
+.empty{color:var(--mute);padding:1.5rem 0}.msg{color:var(--warn);font-size:.9rem}
+@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+</style></head><body>
+<header><h1 id="t">Pantry</h1><div class="sum" id="s"></div></header><main id="m"></main>
+<nav class="bar" id="n"></nav>
+<script type="module" src="app.js"></script></body></html>
