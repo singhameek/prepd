@@ -1,8 +1,8 @@
 // Vercel serverless proxy. Key and model are fixed server-side; clients only send ingredient text.
 const MODEL='nvidia/nemotron-3.5-lightning:free';
 const SYSTEM=`You convert recipe ingredient text into JSON. Reply with ONLY a JSON object, no prose, no code fences:
-{"ingredients":[{"canonical_name":"lowercase singular name","metric_quantity":number,"metric_unit":"g"|"ml"|"pcs","ui_fractional_display":"friendly amount like '~9/10ths of a jug', '¾ full', 'half a block'","estimated_macros":{"calories":number,"protein":number,"carbs":number,"fat":number}}]}
-Include EVERY ingredient as its own array item, even when several are on one line or separated by commas, 'and', or spaces. Convert vague amounts (splash, handful, pinch) to realistic metric estimates. Use pcs for countable items. Macros are for the whole quantity listed.`;
+{"ingredients":[{"canonical_name":"lowercase singular name","metric_quantity":number,"metric_unit":"g"|"ml"|"pcs","ui_fractional_display":"friendly amount like '~9/10ths of a jug', '¾ full', 'half a block'","always_available":true|false,"estimated_macros":{"calories":number,"protein":number,"carbs":number,"fat":number}}]}
+Set always_available true ONLY for free on-demand household items every home has: tap water and ice. Everything else (salt, oil, spices, etc.) is false. Include EVERY ingredient as its own array item, even when several are on one line or separated by commas, 'and', or spaces. Convert vague amounts (splash, handful, pinch) to realistic metric estimates. Use pcs for countable items. Macros are for the whole quantity listed.`;
 const hits=new Map();
 module.exports=async(req,res)=>{
   if(req.method==='GET')return res.status(200).json({ok:true,keySet:!!process.env.OPENROUTER_API_KEY});

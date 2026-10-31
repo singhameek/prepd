@@ -1,3 +1,4 @@
+import {isStaple} from './inventoryEngine.js';
 // Calls the server proxy (/api/chat), which holds the API key and fixed model.
 // Pull every complete ingredient object out of the reply, tolerating fences, prose and truncation.
 function salvage(t){const out=[],st=[];let str=0,esc=0;
@@ -16,7 +17,7 @@ async function parseOnce(text){
   const msg=j.choices?.[0]?.message||{},raw=msg.content||msg.reasoning||'';
   const list=salvage(raw).filter(i=>i.canonical_name&&Number(i.metric_quantity)>0);
   if(!list.length)throw new Error('Could not read those ingredients. Please try again.');
-  return list.map(i=>({name:String(i.canonical_name).toLowerCase(),qty:+i.metric_quantity,
+  return list.map(i=>({staple:i.always_available===true,name:String(i.canonical_name).toLowerCase(),qty:+i.metric_quantity,
     unit:['g','ml','pcs'].includes(i.metric_unit)?i.metric_unit:'g',display:i.ui_fractional_display||'',
-    macros:{calories:+i.estimated_macros?.calories||0,protein:+i.estimated_macros?.protein||0,carbs:+i.estimated_macros?.carbs||0,fat:+i.estimated_macros?.fat||0}}));
+    macros:{calories:+i.estimated_macros?.calories||0,protein:+i.estimated_macros?.protein||0,carbs:+i.estimated_macros?.carbs||0,fat:+i.estimated_macros?.fat||0}})).filter(i=>!isStaple(i));
 }
