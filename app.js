@@ -41,9 +41,11 @@ async function renderPlan(dx=0){
   const total=dayPlans.reduce((a,p)=>a+kcal(recs.get(p.recipeId),p.scale||1),0);
   head(sel===today()?'Today':fmt(sel,{weekday:'long'}),fmt(sel,{day:'numeric',month:'long'})+(total?` · ${total.toLocaleString()} kcal planned`:''));
   m.innerHTML=`<div class="wk"><button class="n" data-wk="-7" aria-label="Previous week">‹</button>${days.map(d=>`<button class="d ${d===sel?'sel':''} ${d===today()?'t':''}" data-d="${d}"><span>${fmt(d,{weekday:'short'})}</span><b>${+d.slice(8)}</b><i class="${plans.some(p=>p.date===d)?'on':''}"></i></button>`).join('')}<button class="n" data-wk="7" aria-label="Next week">›</button></div><div id="body">${SLOTS.map(([k,l,c,em])=>{
-    const p=dayPlans.find(x=>x.slot===k),r=p&&recs.get(p.recipeId);
-    return r?`<button class="slot" style="--c:var(${c})" data-meal="${p.id}"><span class="em">${em}</span><div class="t"><div class="l">${l}</div><div class="nm">${esc(r.name)}</div><div class="l">${kcal(r,p.scale||1)} kcal</div></div>${p.logged?'<span class="ok">✓ Eaten</span>':''}</button>`
-    :`<button class="slot e" style="--c:var(${c})" data-add="${k}"><span class="em">${em}</span><div class="t"><div class="l">${l}</div><div class="nm">What’s cooking?</div></div><span class="plus">+</span></button>`}).join('')}</div>`;
+    const ps=dayPlans.filter(x=>x.slot===k);
+    return ps.map(p=>{const r=recs.get(p.recipeId);
+      return `<button class="slot" style="--c:var(${c})" data-meal="${p.id}"><span class="em">${em}</span><div class="t"><div class="l">${l}</div><div class="nm">${esc(r.name)}</div><div class="l">${kcal(r,p.scale||1)} kcal</div></div>${p.logged?'<span class="ok">✓ Eaten</span>':''}</button>`}).join('')+
+    (ps.length?`<button class="more" style="--c:var(${c})" data-add="${k}">+ Add another ${l.toLowerCase()}</button>`
+    :`<button class="slot e" style="--c:var(${c})" data-add="${k}"><span class="em">${em}</span><div class="t"><div class="l">${l}</div><div class="nm">What’s cooking?</div></div><span class="plus">+</span></button>`)}).join('')}</div>`;
   if(dx)pop($('#body'),dx*24);
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
     if(d.wk){sel=addDays(sel,+d.wk);renderPlan(+d.wk>0?1:-1)}
