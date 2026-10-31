@@ -30,6 +30,9 @@ function sheet(html){
 }
 const busy=(b,on,t)=>{b.disabled=on;b.innerHTML=on?`<span class="sp"></span>${t}`:t};
 
+const delRecipe=async id=>{await db.mealPlans.where('recipeId').equals(id).delete();await db.recipes.delete(id)};
+// Two-tap confirm: first tap arms the button, second tap (within 3s) confirms
+const confirmDel=async b=>{if(b.dataset.armed)return true;const t=b.textContent;b.dataset.armed=1;b.textContent='Tap again to delete';setTimeout(()=>{delete b.dataset.armed;b.textContent=t},3000);return false};
 async function renderPlan(dx=0){
   const wk=monday(sel),days=[...Array(7)].map((_,i)=>addDays(wk,i));
   const plans=await db.mealPlans.where('date').between(days[0],days[6],true,true).toArray();
@@ -56,9 +59,10 @@ async function plan(slot,recipeId){
 }
 async function addSheet(slot){
   const label=SLOTS.find(s=>s[0]===slot)[1].toLowerCase(),saved=await db.recipes.toArray();
-  const sh=sheet(`<h3>Add ${label}</h3><input id="nm" placeholder="Meal name" autocomplete="off"><textarea id="tx" placeholder="Paste ingredients, one per line&#10;2 eggs&#10;a splash of milk&#10;a handful of spinach"></textarea><div class="err" id="er"></div><button id="go" style="width:100%">Add meal</button>${saved.length?`<h4>Saved meals</h4>${saved.map(r=>`<button class="row" data-r="${r.id}"><div class="t"><b>${esc(r.name)}</b><div class="s">${kcal(r)} kcal</div></div><span class="plus" style="color:var(--acc)">+</span></button>`).join('')}`:''}`);
+  const sh=sheet(`<h3>Add ${label}</h3><input id="nm" placeholder="Meal name" autocomplete="off"><textarea id="tx" placeholder="Paste ingredients, one per line&#10;2 eggs&#10;a splash of milk&#10;a handful of spinach"></textarea><div class="err" id="er"></div><button id="go" style="width:100%">Add meal</button>${saved.length?`<h4>Saved meals</h4>${saved.map(r=>`<div class="row" data-row="${r.id}"><button class="r" data-r="${r.id}" style="flex:1;text-align:left;color:var(--ink);padding:0"><b>${esc(r.name)}</b><div class="s">${kcal(r)} kcal · tap to add</div></button><button class="r" data-del="${r.id}" style="padding:.4rem .6rem">Delete</button></div>`).join('')}`:''}`);
   sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
     if(b.dataset.r){sh.close();plan(slot,+b.dataset.r)}
+    if(b.dataset.del&&await confirmDel(b)){await delRecipe(+b.dataset.del);sh.q(`[data-row="${b.dataset.del}"]`).remove();render()}
     if(b.id==='go'){const name=sh.q('#nm').value.trim(),text=sh.q('#tx').value.trim(),er=sh.q('#er');er.textContent='';
       if(!name)return sh.q('#nm').focus(),er.textContent='Give your meal a name.';
       if(!text)return sh.q('#tx').focus(),er.textContent='Paste at least one ingredient.';
@@ -70,9 +74,10 @@ async function mealSheet(id){
   const p=await db.mealPlans.get(id),r=await db.recipes.get(p.recipeId);
   const sh=sheet(`<h3>Edit meal</h3><input id="nm" value="${esc(r.name)}"><textarea id="tx">${esc(r.text||'')}</textarea><div class="err" id="er"></div>
   <div class="s" style="color:var(--mute);font-size:.88rem;margin-bottom:1rem">${r.ingredients.map(i=>`${Math.round(i.qty)} ${i.unit} ${esc(i.name)}`).join(' · ')} — ${kcal(r)} kcal</div>
-  <div class="f"><button id="sv">Save changes</button>${p.logged?'':'<button class="g" id="eat">I ate this</button>'}</div><button class="r" id="rm" style="width:100%;margin-top:.4rem">Remove from plan</button>`);
+  <div class="f"><button id="sv">Save changes</button>${p.logged?'':'<button class="g" id="eat">I ate this</button>'}</div><button class="r" id="rm" style="width:100%;margin-top:.4rem">Remove from plan</button><button class="r" id="dm" style="width:100%">Delete meal from all plans and saved meals</button>`);
   sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
     if(b.id==='rm'){await db.mealPlans.delete(id);sh.close();render()}
+    if(b.id==='dm'&&await confirmDel(b)){await delRecipe(r.id);sh.close();toast('Meal deleted');render()}
     if(b.id==='eat'){const {missing}=await deductIngredientsFromPantry(r.id,p.scale||1);await db.mealPlans.update(id,{logged:1});sh.close();toast(missing.length?`Logged. Pantry was short on ${missing[0].name}`:'Logged. Pantry updated');render()}
     if(b.id==='sv'){const name=sh.q('#nm').value.trim(),text=sh.q('#tx').value.trim(),er=sh.q('#er');
       if(!name||!text)return er.textContent='Name and ingredients can’t be empty.';
