@@ -3,7 +3,7 @@ import {parseIngredients} from './openrouterService.js';
 import {deductIngredientsFromPantry,checkUpcomingMenuShortages,convertMetricToFractionalUI,restockFromGrocery} from './inventoryEngine.js';
 const $=(s,r=document)=>r.querySelector(s),m=$('#m');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const SLOTS=[['breakfast','Breakfast','--b'],['lunch','Lunch','--l'],['dinner','Dinner','--d']];
+const SLOTS=[['breakfast','Breakfast','--b','🍳'],['lunch','Lunch','--l','🥪'],['dinner','Dinner','--d','🍝']];
 const iso=d=>d.toLocaleDateString('sv');
 const addDays=(s,n)=>{const d=new Date(s+'T12:00');d.setDate(d.getDate()+n);return iso(d)};
 const monday=s=>addDays(s,-((new Date(s+'T12:00').getDay()+6)%7));
@@ -40,10 +40,10 @@ async function renderPlan(dx=0){
   const dayPlans=plans.filter(p=>p.date===sel&&recs.has(p.recipeId));
   const total=dayPlans.reduce((a,p)=>a+kcal(recs.get(p.recipeId),p.scale||1),0);
   head(sel===today()?'Today':fmt(sel,{weekday:'long'}),fmt(sel,{day:'numeric',month:'long'})+(total?` · ${total.toLocaleString()} kcal planned`:''));
-  m.innerHTML=`<div class="wk"><button class="n" data-wk="-7" aria-label="Previous week">‹</button>${days.map(d=>`<button class="d ${d===sel?'sel':''} ${d===today()?'t':''}" data-d="${d}"><span>${fmt(d,{weekday:'short'})}</span><b>${+d.slice(8)}</b><i class="${plans.some(p=>p.date===d)?'on':''}"></i></button>`).join('')}<button class="n" data-wk="7" aria-label="Next week">›</button></div><div id="body">${SLOTS.map(([k,l,c])=>{
+  m.innerHTML=`<div class="wk"><button class="n" data-wk="-7" aria-label="Previous week">‹</button>${days.map(d=>`<button class="d ${d===sel?'sel':''} ${d===today()?'t':''}" data-d="${d}"><span>${fmt(d,{weekday:'short'})}</span><b>${+d.slice(8)}</b><i class="${plans.some(p=>p.date===d)?'on':''}"></i></button>`).join('')}<button class="n" data-wk="7" aria-label="Next week">›</button></div><div id="body">${SLOTS.map(([k,l,c,em])=>{
     const p=dayPlans.find(x=>x.slot===k),r=p&&recs.get(p.recipeId);
-    return r?`<button class="slot" style="--c:var(${c})" data-meal="${p.id}"><div class="t"><div class="l">${l}</div><div class="nm">${esc(r.name)}</div><div class="l">${kcal(r,p.scale||1)} kcal</div></div>${p.logged?'<span class="ok">✓ Eaten</span>':''}</button>`
-    :`<button class="slot e" style="--c:var(${c})" data-add="${k}"><div class="t"><div class="l">${l}</div><div class="nm">Add a meal</div></div><span class="plus">+</span></button>`}).join('')}</div>`;
+    return r?`<button class="slot" style="--c:var(${c})" data-meal="${p.id}"><span class="em">${em}</span><div class="t"><div class="l">${l}</div><div class="nm">${esc(r.name)}</div><div class="l">${kcal(r,p.scale||1)} kcal</div></div>${p.logged?'<span class="ok">✓ Eaten</span>':''}</button>`
+    :`<button class="slot e" style="--c:var(${c})" data-add="${k}"><span class="em">${em}</span><div class="t"><div class="l">${l}</div><div class="nm">What’s cooking?</div></div><span class="plus">+</span></button>`}).join('')}</div>`;
   if(dx)pop($('#body'),dx*24);
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
     if(d.wk){sel=addDays(sel,+d.wk);renderPlan(+d.wk>0?1:-1)}
@@ -89,7 +89,7 @@ async function mealSheet(id){
 async function renderPantry(){
   const it=await db.pantryItems.toArray();head('Pantry',it.length?`${it.length} item${it.length>1?'s':''}`:'');
   m.innerHTML=it.length?it.map(i=>{const p=i.capacity?Math.min(1,i.qty/i.capacity):1;return `<button class="row" data-i="${i.id}"><div class="t"><b>${esc(i.name)}</b> <span class="s">${convertMetricToFractionalUI(i.qty,i.capacity)} · ${Math.round(i.qty)} ${i.unit}</span><div class="bt"><div class="bf ${p<.2?'low':''}" style="width:${p*100}%"></div></div></div></button>`}).join('')
-   :'<div class="empty"><b>Your pantry is empty</b>Add what you have, or tick off groceries to stock it.</div>';
+   :'<div class="empty" data-e="🧺"><b>Your pantry is empty</b>Add what you have, or tick off groceries to stock it.</div>';
   m.innerHTML+='<button class="fab" data-new aria-label="Add item">+</button>';
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
     if('new'in b.dataset)itemSheet();else if(b.dataset.i)itemSheet(await db.pantryItems.get(+b.dataset.i))};
@@ -106,7 +106,7 @@ function itemSheet(it){
 async function renderGrocery(){
   const g=await db.groceryList.toArray();head('Grocery',g.length?`${g.length} to buy`:'');
   m.innerHTML=(g.length?g.map(i=>`<div class="row" data-row="${i.id}"><button class="chk" data-buy="${i.id}" aria-label="Mark ${esc(i.name)} bought"></button><div class="t"><b>${esc(i.name)}</b> <span class="s">${i.qty} ${i.unit}</span></div><button class="r" data-x="${i.id}" style="padding:.4rem">✕</button></div>`).join('')
-   :'<div class="empty"><b>Nothing to buy</b>Meals you plan add missing ingredients here.</div>')+'<button class="fab" data-new aria-label="Add item">+</button>';
+   :'<div class="empty" data-e="🛒"><b>Nothing to buy</b>Meals you plan add missing ingredients here.</div>')+'<button class="fab" data-new aria-label="Add item">+</button>';
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
     if(d.buy||d.x){const row=$(`[data-row="${d.buy||d.x}"]`);if(d.buy){b.classList.add('on');b.textContent='✓';await new Promise(r=>setTimeout(r,250));await restockFromGrocery(+d.buy);toast('Moved to pantry')}else await db.groceryList.delete(+d.x);
       row.classList.add('gone');setTimeout(render,300)}
