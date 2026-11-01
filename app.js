@@ -2,7 +2,7 @@ import {db,today,requestPersistence,autoRestore,setOnBackup,exportUserData,impor
 import {parseIngredients} from './ingredientParser.js';
 import {findRecipe} from './recipeFinder.js';
 import * as cloud from './cloud.js';
-import {resolveUnits,learn,loadProfiles} from './units.js';
+import {resolveUnits,learn,loadProfiles} from './api/units.js';
 import {deductIngredientsFromPantry,checkUpcomingMenuShortages,convertMetricToFractionalUI,restockFromGrocery,groceryText,planScale,isStaple,pkgFor,setPrefs,sizeText} from './inventoryEngine.js';
 const UNITS=['g','ml','pcs','tsp','tbsp','cup'],q1=n=>+(+n).toFixed(1);
 const $=(s,r=document)=>r.querySelector(s),m=$('#m');

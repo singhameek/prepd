@@ -1,10 +1,18 @@
 // Supabase backend: device identity (anonymous auth), backup/sync, device transfer codes, shared recipes and unit data.
 import {SUPABASE_URL,SUPABASE_ANON_KEY} from './config.js';
 export const enabled=!!(SUPABASE_URL&&SUPABASE_ANON_KEY);
-let sb=null,userId=null,ready=null;
+let sb=null,userId=null,ready=null,lastError='';
+export const getError=()=>lastError;
 export const isReady=()=>!!userId;
 export const supportId=()=>userId?userId.slice(0,8):'';
 const keyOf=n=>String(n||'').toLowerCase().replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+// Turns common Supabase setup mistakes into plain-language hints.
+const hint=e=>{const m=String(e?.message||e||'');
+  if(/anonymous/i.test(m)&&/disabled|not enabled|allowed/i.test(m))return 'Anonymous sign-ins are switched off. In Supabase: Authentication → Sign In / Providers → turn on “Allow anonymous sign-ins”.';
+  if(/register_device|schema cache|could not find the function|PGRST202/i.test(m))return 'The database functions are missing. Run supabase.sql in the Supabase SQL Editor.';
+  if(/invalid api key|apikey|jwt/i.test(m))return 'The Supabase URL or key in config.js looks wrong. Use the “anon public” key (starts with eyJ).';
+  if(/failed to fetch|networkerror|load failed|import/i.test(m))return 'Can’t reach Supabase. Check the URL in config.js and your connection.';
+  return m||'Unknown error';};
 const fail=e=>{throw new Error(e?.message||'Cloud request failed')};
 // Each device signs in anonymously (no email or password) and is registered to one account.
 export function init(){
@@ -17,7 +25,7 @@ export function init(){
       if(!session){const r=await sb.auth.signInAnonymously();if(r.error)throw r.error}
       const r=await sb.rpc('register_device');if(r.error)throw r.error;
       userId=r.data;return true;
-    }catch(e){console.warn('Cloud unavailable',e);ready=null;return false}
+    }catch(e){lastError=hint(e);console.warn('Cloud unavailable:',lastError,e);ready=null;return false}
   })());
 }
 // ---- backup & sync (whole-app snapshot, last write wins)

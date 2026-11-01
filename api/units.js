@@ -1,7 +1,7 @@
 // Per-ingredient unit data (grams per piece, grams per ml): learned from recipes, shared community data, or USDA on demand.
-import {setProfiles,getProfiles,takeUnresolved,nk} from './inventoryEngine.js';
-import {getProfile,contributeProfile} from './cloud.js';
-import {db} from './db.js';
+import {setProfiles,getProfiles,takeUnresolved,nk} from '../inventoryEngine.js';
+import {getProfile,contributeProfile} from '../cloud.js';
+import {db} from '../db.js';
 const save=()=>db.appSettings.put({key:'unitProfiles',value:getProfiles()});
 export async function loadProfiles(){setProfiles((await db.appSettings.get('unitProfiles'))?.value||{})}
 // Remember densities / piece weights seen while parsing recipes, and share them anonymously.
