@@ -17,6 +17,7 @@ const TABLES=['pantryItems','recipes','mealPlans','nutritionLogs','groceryList']
 export async function exportUserData(){
   const d={app:'SmartKitchen',version:1,exported:new Date().toISOString()};
   for(const t of TABLES)d[t]=await db[t].toArray();
+  d.settings=(await db.appSettings.toArray()).filter(x=>!/^backup/.test(x.key));
   return JSON.stringify(d);
 }
 export async function importUserData(json){
@@ -25,6 +26,7 @@ export async function importUserData(json){
   await db.transaction('rw',TABLES.map(t=>db[t]),async()=>{
     for(const t of TABLES){await db[t].clear();if(d[t]?.length)await db[t].bulkPut(d[t])}
   });
+  if(d.settings?.length)await db.appSettings.bulkPut(d.settings);
 }
 // Automatic backups: 3 rotating slots, written 2s after any change.
 let timer;

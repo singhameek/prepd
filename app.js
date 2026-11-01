@@ -1,7 +1,7 @@
 import {db,today,requestPersistence,autoRestore} from './db.js';
 import {parseIngredients} from './openrouterService.js';
 import {findRecipe} from './recipeFinder.js';
-import {deductIngredientsFromPantry,checkUpcomingMenuShortages,convertMetricToFractionalUI,restockFromGrocery} from './inventoryEngine.js';
+import {deductIngredientsFromPantry,checkUpcomingMenuShortages,convertMetricToFractionalUI,restockFromGrocery,groceryText,isStaple,pkgFor,setPrefs,sizeText} from './inventoryEngine.js';
 const UNITS=['g','ml','pcs','tsp','tbsp','cup'],q1=n=>+(+n).toFixed(1);
 const $=(s,r=document)=>r.querySelector(s),m=$('#m');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -11,7 +11,7 @@ const addDays=(s,n)=>{const d=new Date(s+'T12:00');d.setDate(d.getDate()+n);retu
 const monday=s=>addDays(s,-((new Date(s+'T12:00').getDay()+6)%7));
 const fmt=(s,o)=>new Date(s+'T12:00').toLocaleDateString('en',o);
 const kcal=(r,sc=1)=>Math.round(r.ingredients.reduce((a,i)=>a+i.macros.calories,0)*sc);
-const ICON={plan:'<path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>',pantry:'<path d="M8 3h8v3H8zM6 6h12v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1zM6 11h12"/>',grocery:'<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>'};
+const ICON={plan:'<path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/>',pantry:'<path d="M8 3h8v3H8zM6 6h12v14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1zM6 11h12"/>',settings:'<path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/>',grocery:'<path d="M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01"/>'};
 let tab='plan',sel=today();
 const reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
 const pop=(el,dx=0)=>!reduce&&el.animate([{opacity:0,transform:`translateX(${dx}px) translateY(${dx?0:10}px)`},{opacity:1,transform:'none'}],{duration:300,easing:'cubic-bezier(.2,.9,.3,1)'});
@@ -112,7 +112,7 @@ async function mealSheet(id){
 }
 async function renderPantry(){
   const it=await db.pantryItems.toArray();head('Pantry',it.length?`${it.length} item${it.length>1?'s':''}`:'');
-  m.innerHTML=it.length?it.map(i=>{const p=i.capacity?Math.min(1,i.qty/i.capacity):1;return `<button class="row" data-i="${i.id}"><div class="t"><b>${esc(i.name)}</b> <span class="s">${convertMetricToFractionalUI(i.qty,i.capacity)} · ${q1(i.qty)} ${i.unit}</span><div class="bt"><div class="bf ${p<.2?'low':''}" style="width:${p*100}%"></div></div></div></button>`}).join('')
+  m.innerHTML=it.length?it.map(i=>{const p=i.capacity?Math.min(1,i.qty/i.capacity):1;return `<button class="row" data-i="${i.id}"><div class="t"><b>${esc(i.name)}</b> <span class="s">${convertMetricToFractionalUI(i.qty,i.capacity)} · ${amt(i)}</span><div class="bt"><div class="bf ${p<.2?'low':''}" style="width:${p*100}%"></div></div></div></button>`}).join('')
    :'<div class="empty" data-e="🧺"><b>Your pantry is empty</b>Add what you have, or tick off groceries to stock it.</div>';
   m.innerHTML+='<button class="fab" data-new aria-label="Add item">+</button>';
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
@@ -127,9 +127,43 @@ function itemSheet(it){
       it?await db.pantryItems.update(it.id,{name,qty,unit,capacity:Math.max(it.capacity||0,qty)}):await db.pantryItems.add({name,qty,unit,capacity:qty});
       sh.close();render()}};
 }
+const amt=i=>['g','ml','pcs'].includes(i.unit)?sizeText(i.qty,i.unit):`${q1(i.qty)} ${i.unit}`;
+const saveSet=(key,value)=>db.appSettings.put({key,value});
+async function loadPrefs(){const [p,s]=await Promise.all([db.appSettings.get('packs'),db.appSettings.get('staples')]);setPrefs({packs:p?.value||{},staples:s?.value||[]})}
+function packSheet(name){
+  const p=name?pkgFor({name,unit:'g'}):null;
+  const sh=sheet(`<h3>${name?esc(name):'Pack size'}</h3>${name?'':'<input id="pn" placeholder="Item name">'}<div class="f"><input id="pl" placeholder="Pack name, e.g. bag" value="${esc(p?.n||'pack')}" list="pls"><datalist id="pls"><option>bag<option>pack<option>packet<option>bottle<option>jar<option>carton<option>tub<option>can<option>box<option>bunch<option>tray</datalist></div><div class="f"><input id="ps" type="number" inputmode="decimal" placeholder="Size" value="${p?.size||''}"><input id="pu" value="${p?.unit||'g'}" list="pus"><datalist id="pus"><option>g<option>ml<option>pcs</datalist></div><div class="err" id="er"></div><button id="sv" style="width:100%">Save</button>${p?.custom?'<button class="r" id="rs" style="width:100%;margin-top:.4rem">Reset to default</button>':''}`);
+  sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
+    const k=(name||sh.q('#pn')?.value||'').trim().toLowerCase(),cur=(await db.appSettings.get('packs'))?.value||{};
+    if(b.id==='rs')delete cur[k];
+    else if(b.id==='sv'){const size=+sh.q('#ps').value,unit=sh.q('#pu').value.trim(),n=sh.q('#pl').value.trim()||'pack';
+      if(!k||!(size>0)||!['g','ml','pcs'].includes(unit))return sh.q('#er').textContent='Enter an item, a size, and unit g, ml or pcs.';
+      cur[k]={n,size,unit}}
+    else return;
+    await saveSet('packs',cur);await loadPrefs();await checkUpcomingMenuShortages(48,{addToGrocery:true});sh.close();toast('Saved');render();
+  };
+}
+async function renderSettings(){
+  head('Settings','Pack sizes and staples');
+  const [rs,pi,gl,sv]=await Promise.all([db.recipes.toArray(),db.pantryItems.toArray(),db.groceryList.toArray(),db.appSettings.get('staples')]);
+  const staples=sv?.value||[],seen=new Map();
+  for(const i of [...rs.flatMap(r=>r.ingredients),...pi,...gl]){const n=(i.name||'').toLowerCase();if(n&&!seen.has(n))seen.set(n,i.unit||'g')}
+  const names=[...seen.keys()].filter(n=>!isStaple({name:n})).sort(),note=t=>`<div style="color:var(--mute);font-size:.88rem;margin-bottom:.6rem">${t}</div>`;
+  m.innerHTML=`<h4>Pack sizes</h4>${note('Grocery lists round up to whole packs. Tap an item to set the size you buy.')}`+
+   (names.length?names.map(n=>{const p=pkgFor({name:n,unit:seen.get(n)});
+     return `<button class="row" data-p="${esc(n)}"><div class="t"><b>${esc(n)}</b><div class="s">${p?`1 ${esc(p.n)} = ${sizeText(p.size,p.unit)}${p.custom?' · yours':''}`:'Bought by count · tap to set a pack'}</div></div><span style="color:var(--mute)">›</span></button>`}).join('')
+    :'<div class="empty" data-e="🧺"><b>No ingredients yet</b>Add a meal and its ingredients show up here.</div>')+
+   `<button class="g" data-p="" style="width:100%;margin:.2rem 0 1rem">+ Other item</button><h4>Always-available staples</h4>${note('Never added to Grocery or taken from the pantry. Separate several with commas.')}<div><span class="chip">water</span><span class="chip">ice</span>${staples.map(x=>`<span class="chip">${esc(x)}<button data-rs="${esc(x)}" aria-label="Remove ${esc(x)}">✕</button></span>`).join('')}</div><div class="f" style="margin-top:.4rem"><input id="st" placeholder="e.g. salt, cooking oil" style="margin:0"><button id="addst" style="flex:none">Add</button></div>`;
+  m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
+    if('p'in d)packSheet(d.p);
+    if(d.rs){await saveSet('staples',staples.filter(x=>x!==d.rs));await loadPrefs();render()}
+    if(b.id==='addst'){const add=$('#st').value.split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);if(!add.length)return;
+      await saveSet('staples',[...new Set([...staples,...add])]);await loadPrefs();
+      const gl2=await db.groceryList.toArray();await db.groceryList.bulkDelete(gl2.filter(g=>add.includes(g.name.toLowerCase())).map(g=>g.id));render()}};
+}
 async function renderGrocery(){
   const g=await db.groceryList.toArray();head('Grocery',g.length?`${g.length} to buy`:'');
-  m.innerHTML=(g.length?g.map(i=>`<div class="row" data-row="${i.id}"><button class="chk" data-buy="${i.id}" aria-label="Mark ${esc(i.name)} bought"></button><div class="t"><b>${esc(i.name)}</b> <span class="s">${i.qty} ${i.unit}</span></div><button class="r" data-x="${i.id}" style="padding:.4rem">✕</button></div>`).join('')
+  m.innerHTML=(g.length?g.map(i=>`<div class="row" data-row="${i.id}"><button class="chk" data-buy="${i.id}" aria-label="Mark ${esc(i.name)} bought"></button><div class="t"><b>${esc(groceryText(i).title)}</b><div class="s">${esc(groceryText(i).sub)}</div></div><button class="r" data-x="${i.id}" style="padding:.4rem">✕</button></div>`).join('')
    :'<div class="empty" data-e="🛒"><b>Nothing to buy</b>Meals you plan add missing ingredients here.</div>')+'<button class="fab" data-new aria-label="Add item">+</button>';
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
     if(d.buy||d.x){const row=$(`[data-row="${d.buy||d.x}"]`);if(d.buy){b.classList.add('on');b.textContent='✓';await new Promise(r=>setTimeout(r,250));await restockFromGrocery(+d.buy);toast('Moved to pantry')}else await db.groceryList.delete(+d.x);
@@ -141,12 +175,12 @@ async function renderGrocery(){
 }
 async function render(){
   const n=await db.groceryList.count();
-  $('#n').innerHTML=[['plan','Plan'],['pantry','Pantry'],['grocery','Grocery']].map(([k,l])=>`<button data-t="${k}" class="${k===tab?'on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>${l}${k==='grocery'&&n?`<span class="bd">${n}</span>`:''}</button>`).join('');
-  await({plan:renderPlan,pantry:renderPantry,grocery:renderGrocery}[tab])();
+  $('#n').innerHTML=[['plan','Plan'],['pantry','Pantry'],['grocery','Grocery'],['settings','Settings']].map(([k,l])=>`<button data-t="${k}" class="${k===tab?'on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>${l}${k==='grocery'&&n?`<span class="bd">${n}</span>`:''}</button>`).join('');
+  await({plan:renderPlan,pantry:renderPantry,grocery:renderGrocery,settings:renderSettings}[tab])();
 }
 $('#n').onclick=e=>{const t=e.target.closest('button')?.dataset.t;if(t&&t!==tab){tab=t;scrollTo(0,0);render().then(()=>pop(m))}};
 (async()=>{
-  await requestPersistence();await autoRestore();await render();
+  await requestPersistence();await autoRestore();await loadPrefs();await render();
   if('serviceWorker'in navigator){navigator.serviceWorker.register('sw.js').then(async r=>{try{await r.periodicSync?.register('shortage-check',{minInterval:36e5})}catch{}});
     navigator.serviceWorker.addEventListener('message',e=>e.data==='check-shortages'&&checkUpcomingMenuShortages(48))}
   checkUpcomingMenuShortages(48);setInterval(()=>checkUpcomingMenuShortages(48),36e5);

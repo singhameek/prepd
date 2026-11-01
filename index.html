@@ -1,6 +1,6 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#ffffff"><link rel="manifest" href="manifest.webmanifest"><link rel="apple-touch-icon" href="icon.svg">
+<meta name="theme-color" content="#ffffff"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="favicon.ico" sizes="any"><link rel="icon" type="image/svg+xml" href="icon.svg"><link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>Prepd</title>
 <style>
 :root{--bg:#fff;--card:#fff;--ink:#2a1517;--mute:#8d7276;--acc:#ff4d3d;--accT:#fff0ee;--warn:#d6336c;--glass:rgba(255,255,255,.82);--line:#f3e1e0;--b:#ff9f43;--l:#ff5a4f;--d:#d6336c;--ease:cubic-bezier(.2,.9,.3,1);--bounce:cubic-bezier(.34,1.56,.64,1);--sheet:cubic-bezier(.32,.72,0,1);font:100%/1.45 ui-rounded,"SF Pro Rounded",system-ui,-apple-system,sans-serif;-webkit-tap-highlight-color:transparent}
@@ -28,6 +28,7 @@ input:focus,textarea:focus{outline:none;border-color:var(--acc);box-shadow:0 0 0
 @keyframes grow{from{transform:scaleX(0)}}
 .chk{width:1.7rem;height:1.7rem;padding:0;border-radius:50%;background:none;border:2px solid var(--line);flex:none;color:#fff;display:grid;place-items:center;transition:all .4s var(--bounce);box-shadow:none}.chk.on{background:var(--acc);border-color:var(--acc);transform:scale(1.25)}
 .gone{opacity:0;transform:translateX(30px);transition:all .3s var(--ease)}
+.chip{display:inline-flex;align-items:center;gap:.3rem;background:var(--accT);color:var(--acc);border-radius:2rem;padding:.35rem .85rem;margin:0 .4rem .5rem 0;font-weight:650;font-size:.9rem}.chip button{background:none;color:inherit;padding:0 0 0 .2rem;box-shadow:none;border-radius:0}
 .empty{text-align:center;color:var(--mute);padding:3rem 1rem}.empty:before{content:attr(data-e);display:block;font-size:3rem;margin-bottom:.4rem;animation:wob 2.4s ease-in-out infinite}@keyframes wob{50%{transform:rotate(8deg) scale(1.08)}}.empty b{display:block;color:var(--ink);font-size:1.1rem;margin-bottom:.2rem}
 .fab{position:fixed;right:max(1rem,calc(50% - 17rem));bottom:calc(5.2rem + env(safe-area-inset-bottom));width:3.4rem;height:3.4rem;border-radius:50%;padding:0;font-size:1.8rem;box-shadow:0 6px 20px rgba(255,77,61,.45);z-index:4}
 nav{position:fixed;inset:auto 0 0;z-index:6;display:flex;justify-content:center;gap:.5rem;padding:.4rem .5rem calc(env(safe-area-inset-bottom) + .4rem);background:var(--glass);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);border-top:1px solid var(--line)}
