@@ -1,9 +1,24 @@
 import {db,today} from './db.js';
+import {getIngredient} from './ingredient-engine.js';
 export const UNITS=['g','ml','pcs','tsp','tbsp','cup'];
-// Mass and volume are treated as one family (1 g ≈ 1 ml; the parser already converts using densities), so
-// "2 cups atta" in a recipe matches "5000 g atta" in the pantry. Counted items (pcs) stay separate.
+// Every quantity is converted through grams, using per-ingredient data: grams per piece and grams per ml.
+// Sources, in order: learned/looked-up profiles (shared via the cloud), the parser's built-in table, then a default.
+// So 3 pcs of potato in the pantry matches 500 g in a recipe, and 2 cups atta matches 5 kg atta.
 const F={g:1,ml:1,pcs:1,tsp:5,tbsp:15,cup:240};
-const f=u=>F[u]||1,fam=u=>u==='pcs'?'pcs':'m',baseUnit=u=>u==='pcs'?'pcs':u==='g'?'g':'ml';
+let prof={};const unresolved=new Set();
+export const setProfiles=p=>{prof=p||{}};
+export const getProfiles=()=>prof;
+export const takeUnresolved=()=>{const a=[...unresolved];unresolved.clear();return a};
+const known=n=>{try{return getIngredient(String(n).toLowerCase())}catch{return null}};
+const gp=(u,n)=>{
+  if(u==='g')return 1;
+  const k=nk(n),p=prof[k];
+  if(u==='pcs'){const w=p?.pc??known(n)?.piece;if(w>0)return w;if(!p?.tried)unresolved.add(k);return 100}
+  const d=p?.d??known(n)?.density;
+  if(!(d>0)){if(!p?.tried)unresolved.add(k);return F[u]||1}
+  return (F[u]||1)*d;
+};
+const baseUnit=u=>u==='pcs'?'pcs':u==='g'?'g':'ml';
 // Name matching: ignores case, plurals and common synonyms so "Onions" = "onion" and "curd" = "yogurt".
 const SYN=[[/^(whole )?wheat flour$|^atta$|^chapati flour$/,'atta'],[/^(curd|dahi|yogh?urt|plain yogh?urt)$/,'curd'],[/^(coriander leaves?|cilantro|dhania)$/,'cilantro'],
  [/^(capsicum|bell peppers?)$/,'bell pepper'],[/^(green )?chil+(i|ies|y|is|es)?$|^green chil+(i|ies|y|is|es)?$/,'green chili'],[/^(jeera|cumin|cumin seeds?)$/,'cumin'],
@@ -34,7 +49,7 @@ export const setPrefs=({packs={},staples=[]}={})=>{over=Object.fromEntries(Objec
 export function pkgFor(i){
   const n=(i.name||'').toLowerCase().trim(),bu=baseUnit(i.unit||'g'),pc=bu==='pcs';
   const o=over[nk(n)];if(o?.size>0)return {n:o.n||'pack',size:o.size,unit:o.unit||bu,custom:true};
-  const m=PK.find(x=>x[0].test(n)&&(x[3]==='pcs')===pc);
+  const m=PK.find(x=>x[0].test(n));
   if(m)return {n:m[1],size:m[2],unit:m[3]};
   if(i.pkg?.size>0)return {...i.pkg,unit:bu};
   if(pc)return null;
@@ -65,14 +80,14 @@ export async function deductIngredientsFromPantry(recipeId,portionScale=1,{logMe
     const pantry=await db.pantryItems.toArray();
     for(const ing of r.ingredients){
       if(skip(ing))continue;
-      let need=ing.qty*portionScale*f(ing.unit);
-      const stock=pantry.filter(p=>nk(p.name)===nk(ing.name)&&fam(p.unit)===fam(ing.unit)).sort((a,b)=>(a.expiry||'9')<(b.expiry||'9')?-1:1);
+      let need=ing.qty*portionScale*gp(ing.unit,ing.name);
+      const stock=pantry.filter(p=>nk(p.name)===nk(ing.name)).sort((a,b)=>(a.expiry||'9')<(b.expiry||'9')?-1:1);
       for(const p of stock){
         if(need<=0)break;
-        const take=Math.min(p.qty*f(p.unit),need);p.qty-=take/f(p.unit);need-=take;
+        const w=gp(p.unit,ing.name),take=Math.min(p.qty*w,need);p.qty-=take/w;need-=take;
         p.qty<=0.001?await db.pantryItems.delete(p.id):await db.pantryItems.put(p);
       }
-      if(need>0.5)missing.push({name:ing.name,qty:need/f(ing.unit),unit:ing.unit}); // ignore rounding crumbs
+      if(need>0.5)missing.push({name:ing.name,qty:need/gp(ing.unit,ing.name),unit:ing.unit}); // ignore rounding crumbs
     }
     if(logMeal)await db.nutritionLogs.add({date:today(),recipeId,name:r.name,...sumMacros(r.ingredients,portionScale)});
   });
@@ -86,14 +101,14 @@ export async function checkUpcomingMenuShortages(forecastHours=24,{addToGrocery=
   const plans=(await db.mealPlans.where('date').between(today(),end,true,true).toArray()).filter(p=>!p.logged);
   const need=new Map();
   for(const p of plans){const r=await db.recipes.get(p.recipeId);if(!r)continue;const sc=planScale(p,r);
-    for(const i of r.ingredients){if(skip(i))continue;const k=nk(i.name)+'|'+fam(i.unit);
-      const e=need.get(k)||{name:i.name,unit:i.unit,qty:0,pkg:i.pkg||null};e.qty+=i.qty*sc*f(i.unit);need.set(k,e)}}
+    for(const i of r.ingredients){if(skip(i))continue;const k=nk(i.name);
+      const e=need.get(k)||{name:i.name,unit:i.unit,qty:0};e.qty+=i.qty*sc*gp(i.unit,i.name);need.set(k,e)}}
   const pantry=await db.pantryItems.toArray(),shortages=[];
   for(const [k,n] of need){
-    const have=pantry.filter(p=>nk(p.name)+'|'+fam(p.unit)===k).reduce((s,p)=>s+p.qty*f(p.unit),0);
+    const have=pantry.filter(p=>nk(p.name)===k).reduce((s,p)=>s+p.qty*gp(p.unit,n.name),0);
     if(have<n.qty-0.5){
       const pkg=pkgFor(n),base=n.qty-have;
-      shortages.push({name:n.name,unit:n.unit,pkg,qty:Math.ceil(base/f(n.unit)*10)/10,packs:pkg?Math.max(1,Math.ceil(base/pkg.size-1e-6)):0})}
+      shortages.push({name:n.name,unit:n.unit,pkg,qty:Math.ceil(base/gp(n.unit,n.name)*10)/10,packs:pkg?Math.max(1,Math.ceil(base/(pkg.size*gp(pkg.unit||baseUnit(n.unit),n.name))-1e-6)):0})}
   }
   if(addToGrocery){
     const gl=await db.groceryList.toArray(),open=gl.filter(g=>!g.checked),keep=new Set();
@@ -132,8 +147,8 @@ export async function restockFromGrocery(id){
   // Bought packages add the full package amount; manual items add the exact amount.
   const pk=g.pkg&&g.packs,un=pk?(g.pkg.unit||baseUnit(g.unit)):g.unit,amt=pk?g.pkg.size*g.packs:g.qty;
   await db.transaction('rw',db.groceryList,db.pantryItems,async()=>{
-    const p=(await db.pantryItems.toArray()).find(x=>nk(x.name)===nk(g.name)&&fam(x.unit)===fam(un));
-    if(p){const nq=p.qty+amt*f(un)/f(p.unit);await db.pantryItems.update(p.id,{qty:nq,capacity:Math.max(p.capacity||0,nq)})}
+    const p=(await db.pantryItems.toArray()).find(x=>nk(x.name)===nk(g.name));
+    if(p){const nq=p.qty+amt*gp(un,g.name)/gp(p.unit,g.name);await db.pantryItems.update(p.id,{qty:nq,capacity:Math.max(p.capacity||0,nq)})}
     else await db.pantryItems.add({name:g.name,qty:amt,capacity:amt,unit:un});
     await db.groceryList.delete(id);
   });

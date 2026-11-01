@@ -17,7 +17,7 @@ const TABLES=['pantryItems','recipes','mealPlans','nutritionLogs','groceryList']
 export async function exportUserData(){
   const d={app:'SmartKitchen',version:1,exported:new Date().toISOString()};
   for(const t of TABLES)d[t]=await db[t].toArray();
-  d.settings=(await db.appSettings.toArray()).filter(x=>!/^backup/.test(x.key));
+  d.settings=(await db.appSettings.toArray()).filter(x=>!/^(backup|cloud_|device_)/.test(x.key));
   return JSON.stringify(d);
 }
 export async function importUserData(json){
@@ -29,13 +29,16 @@ export async function importUserData(json){
   if(d.settings?.length)await db.appSettings.bulkPut(d.settings);
 }
 // Automatic backups: 3 rotating slots, written 2s after any change.
-let timer;
+let timer,onBackup=null;
+export const setOnBackup=f=>{onBackup=f};
 export function scheduleAutoBackup(){
+  try{localStorage.setItem('prepd_dirty','1')}catch{}
   clearTimeout(timer);
   timer=setTimeout(async()=>{
-    const cur=(await db.appSettings.get('backupCursor'))?.value??-1,n=(cur+1)%3;
-    await db.appSettings.put({key:'backup_'+n,value:await exportUserData(),ts:Date.now()});
+    const cur=(await db.appSettings.get('backupCursor'))?.value??-1,n=(cur+1)%3,snap=await exportUserData();
+    await db.appSettings.put({key:'backup_'+n,value:snap,ts:Date.now()});
     await db.appSettings.put({key:'backupCursor',value:n});
+    try{await onBackup?.(snap)}catch{}  // also copies to the cloud when set up
   },2000);
 }
 for(const t of TABLES)for(const h of['creating','updating','deleting'])db[t].hook(h,()=>{scheduleAutoBackup()});
