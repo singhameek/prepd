@@ -1,31 +1,25 @@
-// Per-ingredient unit data (grams per piece, grams per ml): learned from recipes, shared community data, or USDA on demand.
-import {setProfiles,getProfiles,takeUnresolved,nk} from '../inventoryEngine.js';
-import {getProfile,contributeProfile} from '../cloud.js';
-import {db} from '../db.js';
-const save=()=>db.appSettings.put({key:'unitProfiles',value:getProfiles()});
-export async function loadProfiles(){setProfiles((await db.appSettings.get('unitProfiles'))?.value||{})}
-// Remember densities / piece weights seen while parsing recipes, and share them anonymously.
-export async function learn(items,share=true){
-  const p={...getProfiles()};let ch=false;
-  for(const i of items){
-    const k=nk(i.name),cur=p[k]||{},pc=i.pc&&!cur.pc?i.pc:null,d=i.d&&!cur.d?i.d:null;
-    if(pc||d){p[k]={...cur,...(pc&&{pc}),...(d&&{d}),src:cur.src||'recipe'};ch=true;if(share)contributeProfile(k,pc,d)}
-  }
-  if(ch){setProfiles(p);await save()}
-}
-async function usda(k){
-  try{const r=await fetch('/api/units?name='+encodeURIComponent(k));if(!r.ok)return null;const j=await r.json();return j.found?{pc:j.pc,d:j.d,src:'usda'}:null}catch{return null}
-}
-// Looks up anything the engine had to guess (e.g. a pantry item counted in pcs): community data first, then USDA.
-export async function resolveUnits(){
-  const names=takeUnresolved();if(!names.length)return false;
-  const p={...getProfiles()};let changed=false;
-  for(const k of names){
-    if(p[k]?.tried)continue;
-    let r=await getProfile(k),fresh=false;
-    if(!r){r=await usda(k);fresh=!!r}
-    if(r&&(r.pc||r.d)){p[k]={...p[k],...(r.pc&&{pc:r.pc}),...(r.d&&{d:r.d}),src:r.src};changed=true;if(fresh)contributeProfile(k,r.pc,r.d)}
-    else p[k]={...p[k],tried:1};
-  }
-  setProfiles(p);await save();return changed;
-}
+// Looks up grams-per-piece and grams-per-ml for an ingredient from USDA FoodData Central (server-side).
+// Set USDA_API_KEY in Vercel (free at fdc.nal.usda.gov/api-key-signup); DEMO_KEY works but is tightly rate limited.
+const hits=new Map();
+module.exports=async(req,res)=>{
+  const ip=(req.headers['x-forwarded-for']||'').split(',')[0]||'x',now=Date.now();
+  const h=(hits.get(ip)||[]).filter(t=>now-t<6e4);
+  if(h.length>=20)return res.status(429).json({error:'Too many requests'});
+  h.push(now);hits.set(ip,h);
+  const q=String(req.query.name||'').toLowerCase().replace(/[^a-z ]/g,' ').trim().slice(0,60);
+  if(!q)return res.status(400).json({error:'Missing name'});
+  const key=process.env.USDA_API_KEY||'DEMO_KEY',sig=()=>AbortSignal.timeout(7000);
+  try{
+    const s=await (await fetch(`https://api.nal.usda.gov/fdc/v1/foods/search?query=${encodeURIComponent(q)}&dataType=Foundation,SR%20Legacy&pageSize=5&api_key=${key}`,{signal:sig()})).json();
+    const word=q.split(' ').pop();
+    const f=(s.foods||[]).find(x=>String(x.description).toLowerCase().includes(word));
+    if(!f)return res.status(200).json({found:false});
+    const d=await (await fetch(`https://api.nal.usda.gov/fdc/v1/food/${f.fdcId}?api_key=${key}`,{signal:sig()})).json();
+    let pc=null,dens=null;
+    const ports=(d.foodPortions||[]).map(p=>({g:p.gramWeight/(p.amount||1),t:`${p.modifier||''} ${p.portionDescription||''} ${p.measureUnit?.name||''}`.toLowerCase()})).filter(p=>p.g>0);
+    for(const [re,div] of [[/\bcup\b/,240],[/\btbsp\b|tablespoon/,15],[/\btsp\b|teaspoon/,5]]){const p=ports.find(x=>re.test(x.t));if(p){dens=p.g/div;break}}
+    for(const re of [/medium/,/\beach\b|\bwhole\b/,/large/,/small/]){const p=ports.find(x=>re.test(x.t)&&!/slice|cup|tbsp|tsp|chunk|oz\b|strip/.test(x.t));if(p){pc=p.g;break}}
+    res.setHeader('Cache-Control','s-maxage=86400');
+    res.status(200).json({found:!!(pc||dens),pc:pc?Math.round(pc*10)/10:null,d:dens?Math.round(dens*1000)/1000:null,desc:f.description});
+  }catch{res.status(200).json({found:false})}
+};

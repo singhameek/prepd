@@ -1,4 +1,4 @@
-const V='sk-v18',ASSETS=['./','index.html','app.js','db.js','ingredient-engine.js','ingredientParser.js','config.js','cloud.js','units.js','icon-192.png','inventoryEngine.js','recipeFinder.js','manifest.webmanifest','icon.svg','icon-192.png','icon-512.png','apple-touch-icon.png','favicon.ico'];
+const V='sk-v19',ASSETS=['./','index.html','app.js','db.js','ingredient-engine.js','ingredientParser.js','config.js','cloud.js','units.js','icon-192.png','inventoryEngine.js','recipeFinder.js','manifest.webmanifest','icon.svg','icon-192.png','icon-512.png','apple-touch-icon.png','favicon.ico'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>Promise.all(ASSETS.map(a=>c.add(a).catch(()=>{})))));self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==V).map(x=>caches.delete(x)))));self.clients.claim()});
 self.addEventListener('fetch',e=>{

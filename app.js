@@ -2,7 +2,7 @@ import {db,today,requestPersistence,autoRestore,setOnBackup,exportUserData,impor
 import {parseIngredients} from './ingredientParser.js';
 import {findRecipe} from './recipeFinder.js';
 import * as cloud from './cloud.js';
-import {resolveUnits,learn,loadProfiles} from './api/units.js';
+import {resolveUnits,learn,loadProfiles} from './units.js';
 import {deductIngredientsFromPantry,checkUpcomingMenuShortages,convertMetricToFractionalUI,restockFromGrocery,groceryText,planScale,isStaple,pkgFor,setPrefs,sizeText} from './inventoryEngine.js';
 const UNITS=['g','ml','pcs','tsp','tbsp','cup'],q1=n=>+(+n).toFixed(1);
 const $=(s,r=document)=>r.querySelector(s),m=$('#m');
@@ -162,18 +162,19 @@ async function renderSettings(){
   const staples=sv?.value||[],seen=new Map();
   for(const i of [...rs.flatMap(r=>r.ingredients),...pi,...gl]){const n=(i.name||'').toLowerCase();if(n&&!seen.has(n))seen.set(n,i.unit||'g')}
   const names=[...seen.keys()].filter(n=>!isStaple({name:n})).sort(),note=t=>`<div style="color:var(--mute);font-size:.88rem;margin:.1rem 0 .6rem">${t}</div>`;
-  const state=!cloud.enabled?'Cloud backup is not set up. Your data is saved on this device only.':cloud.isReady()?`Backed up automatically · Support ID <b>${cloud.supportId()}</b>`:'Offline right now. Changes are saved here and will sync when you’re back online.';
+  const state=!cloud.enabled?'Cloud backup is not set up. Your data is saved on this device only.':cloud.isReady()?`Backed up automatically · Support ID <b>${cloud.supportId()}</b>`:`Not connected to the cloud. Changes are saved on this device and sync once it connects.${cloud.getError()?` <span style="color:var(--warn)">Reason: ${esc(cloud.getError())}</span>`:''}`;
   m.innerHTML=`<details class="fold" id="pk" ${packsOpen?'open':''}><summary>Pack sizes <span class="s" style="font-weight:500">${names.length} item${names.length===1?'':'s'}</span></summary>${note('Grocery lists round up to whole packs. Tap an item to set the size you buy.')}`+
    (names.length?names.map(n=>{const p=pkgFor({name:n,unit:seen.get(n)});
      return `<button class="row" data-p="${esc(n)}"><div class="t"><b>${esc(n)}</b><div class="s">${p?`1 ${esc(p.n)} = ${sizeText(p.size,p.unit)}${p.custom?' · yours':''}`:'Bought by count · tap to set a pack'}</div></div><span style="color:var(--mute)">›</span></button>`}).join('')
     :'<div class="empty" data-e="🧺"><b>No ingredients yet</b>Add a meal and its ingredients show up here.</div>')+
    `<button class="g" data-p="" style="width:100%;margin:.2rem 0 .8rem">+ Other item</button></details><h4>Always-available staples</h4>${note('Never added to Grocery or taken from the pantry. Separate several with commas.')}<div><span class="chip">water</span><span class="chip">ice</span>${staples.map(x=>`<span class="chip">${esc(x)}<button data-rs="${esc(x)}" aria-label="Remove ${esc(x)}">✕</button></span>`).join('')}</div><div class="f" style="margin:.4rem 0 1rem"><input id="st" placeholder="e.g. salt, cooking oil" style="margin:0"><button id="addst" style="flex:none">Add</button></div>
-   <h4>Your data</h4>${note(state)}<div class="f"><button class="g" id="send">Send data to new device</button><button class="g" id="join">Enter a code</button></div>
+   <h4>Your data</h4>${note(state)}<div class="f"><button class="g" id="send">Send data to new device</button><button class="g" id="join">Enter a code</button></div>${cloud.enabled&&!cloud.isReady()?'<button class="g" id="retry" style="width:100%;margin-top:.5rem">Retry connection</button>':''}
    <label class="tog"><div><b>Share recipes anonymously</b><div class="s">Helps everyone get more accurate ingredients. Never includes your name or pantry.</div></div><input type="checkbox" id="shr" ${sh0?'checked':''}></label>`;
   $('#pk').ontoggle=e=>{packsOpen=e.target.open};
   $('#shr').onchange=e=>saveSet('cloud_share',e.target.checked);
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
     if('p'in d)packSheet(d.p);
+    if(b.id==='retry'){busy(b,1,'Connecting…');await cloud.init();render()}
     if(b.id==='send')sendSheet();if(b.id==='join')joinSheet(false);
     if(d.rs){await saveSet('staples',staples.filter(x=>x!==d.rs));await loadPrefs();await sync();render()}
     if(b.id==='addst'){const add=$('#st').value.split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);if(!add.length)return;
