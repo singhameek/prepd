@@ -1,5 +1,5 @@
 // Tiny allow-listed fetch proxy so the browser can read recipe sites (they block CORS). Not an open proxy.
-const ALLOW=['hebbarskitchen.com','cookwithmanali.com','ministryofcurry.com','spiceupthecurry.com','swasthisrecipes.com','vegrecipesofindia.com'];
+const ALLOW=['hebbarskitchen.com','cookwithmanali.com','ministryofcurry.com','spiceupthecurry.com'];
 const ok=h=>ALLOW.some(d=>h===d||h.endsWith('.'+d));
 const hits=new Map();
 module.exports=async(req,res)=>{

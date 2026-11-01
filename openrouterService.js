@@ -1,23 +1,31 @@
 import {isStaple} from './inventoryEngine.js';
-// Pull every complete ingredient object out of a reply, tolerating fences, prose and truncation.
-function salvage(t){const out=[],st=[];let str=0,esc=0;
-  for(let i=0;i<t.length;i++){const c=t[i];
-    if(str){if(esc)esc=0;else if(c==='\\')esc=1;else if(c==='"')str=0;continue}
-    if(c==='"')str=1;else if(c==='{')st.push(i);
-    else if(c==='}'&&st.length){const a=st.pop();try{const o=JSON.parse(t.slice(a,i+1));if(o&&o.canonical_name)out.push(o)}catch{}}}
-  return out}
-const norm=list=>list.filter(i=>i.canonical_name&&Number(i.metric_quantity)>0).map(i=>({staple:i.always_available===true,
-  name:String(i.canonical_name).toLowerCase(),qty:+i.metric_quantity,unit:['g','ml','pcs'].includes(i.metric_unit)?i.metric_unit:'g',
-  display:i.ui_fractional_display||'',macros:{calories:+i.estimated_macros?.calories||0,protein:+i.estimated_macros?.protein||0,carbs:+i.estimated_macros?.carbs||0,fat:+i.estimated_macros?.fat||0}})).filter(i=>!isStaple(i));
-async function call(body){
-  const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+// Parse compact rows ["name",qty,"unit",kcal,p,c,f,always] from a reply, tolerating fences, prose and truncation.
+function rows(t){
+  const out=[];
+  for(const m of t.matchAll(/\[\s*"[^\[\]]*\]/g)){try{const a=JSON.parse(m[0]);if(a.length>=7&&Number(a[1])>0)out.push(a)}catch{}}
+  return out;
+}
+async function call(text){
+  const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
   const j=await res.json().catch(()=>({}));
   if(res.status===404&&!j.error)throw new Error('AI endpoint not found (/api/chat). The server function is not deployed.');
   if(!res.ok)throw new Error(typeof j.error==='string'?j.error:`Service error (${res.status}). Try again.`);
-  const msg=j.choices?.[0]?.message||{};return msg.content||msg.reasoning||'';
+  const m=j.choices?.[0]?.message||{};return m.content||m.reasoning||'';
 }
-const retry=async f=>{try{return await f()}catch(e){if(/Could not/.test(e.message))return f();throw e}};
-export const parseIngredients=text=>retry(async()=>{
-  const list=norm(salvage(await call({text})));
-  if(!list.length)throw new Error('Could not read those ingredients. Please try again.');
-  return list});
+async function chunk(lines){
+  for(let t=0;;t++){
+    try{
+      const r=rows(await call(lines.join('\n')));
+      if(!r.length)throw new Error('Could not read those ingredients. Please try again.');
+      return r.map((a,k)=>({staple:a[7]==1,name:String(a[0]).toLowerCase(),qty:+a[1],unit:['g','ml','pcs'].includes(a[2])?a[2]:'g',
+        display:r.length===lines.length?lines[k]:'',macros:{calories:+a[3]||0,protein:+a[4]||0,carbs:+a[5]||0,fat:+a[6]||0}}));
+    }catch(e){if(t||!/Could not/.test(e.message))throw e}
+  }
+}
+// Long lists are split into small chunks and parsed in parallel (much faster than one big reply).
+export async function parseIngredients(text){
+  const lines=text.split('\n').map(s=>s.trim()).filter(Boolean),parts=[];
+  for(let i=0;i<lines.length;i+=5)parts.push(lines.slice(i,i+5));
+  const res=(await Promise.all(parts.map(chunk))).flat().filter(i=>!isStaple(i));
+  return res;
+}

@@ -1,7 +1,7 @@
 // Finds a recipe without a search engine: queries recipe sites' own search (WordPress REST API)
 // through our own /api/fetch proxy (api.allorigins.win as backup), reads the page's schema.org Recipe data, and falls back to TheMealDB.
 const PROXIES=['/api/fetch?url=','https://api.allorigins.win/raw?url=']; // own allow-listed proxy first, allorigins as backup
-const SITES=['hebbarskitchen.com','cookwithmanali.com','ministryofcurry.com','spiceupthecurry.com','swasthisrecipes.com','vegrecipesofindia.com'];
+const SITES=['hebbarskitchen.com','cookwithmanali.com','ministryofcurry.com','spiceupthecurry.com'];
 async function tryFetch(u,ms){
   const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);
   try{return await fetch(u,{signal:c.signal})}finally{clearTimeout(t)}
