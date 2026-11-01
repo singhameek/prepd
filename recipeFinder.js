@@ -16,9 +16,14 @@ async function get(url,ms=6000){
 }
 const dom=h=>new DOMParser().parseFromString(h,'text/html');
 const clean=s=>dom(String(s)).documentElement.textContent.replace(/\s+/g,' ').trim();
+// Some sites ignore the search term and return the same posts, so every hit is checked against the dish name.
+const STOP=new Set(['recipe','recipes','with','and','the','style','easy','how','to','make','in']);
+const words=t=>String(t).toLowerCase().split(/[^a-z0-9]+/).filter(w=>w&&!STOP.has(w));
+const rel=(q,text)=>{const w=words(q),t=String(text).toLowerCase();if(!w.length)return true;
+  return w.filter(x=>t.includes(x)).length/w.length>=(w.length<=2?1:.66)};
 async function search(q){
   const res=await Promise.allSettled(SITES.map(async d=>
-    JSON.parse(await get(`https://${d}/wp-json/wp/v2/posts?search=${encodeURIComponent(q)}&per_page=2&_fields=link`)).map(x=>x.link)));
+    JSON.parse(await get(`https://${d}/wp-json/wp/v2/posts?search=${encodeURIComponent(q)}&per_page=6&_fields=link,title`)).filter(x=>rel(q,(x.title?.rendered||'')+' '+x.link)).map(x=>x.link)));
   const lists=res.map(r=>r.status==='fulfilled'?r.value:[]),out=[];
   for(let i=0;i<2;i++)for(const l of lists)if(l[i]&&!out.includes(l[i]))out.push(l[i]); // interleave sites
   return out;
@@ -55,9 +60,9 @@ export async function findRecipe(name,onStatus=()=>{}){
     const links=await search(name);
     if(!links.length)return null;
     onStatus('Reading recipe…');
-    return Promise.any(links.slice(0,4).map(async l=>{const r=extract(await get(l));if(!r)throw 0;return {...r,url:l}})).catch(()=>null);
+    return Promise.any(links.slice(0,4).map(async l=>{const r=extract(await get(l));if(!r||!rel(name,(r.title||'')+' '+l))throw 0;return {...r,url:l}})).catch(()=>null);
   })().catch(()=>null);
-  const r=await fromSites||await backup;
+  const r=await fromSites||await backup.then(m=>m&&rel(name,m.title)?m:null);
   if(!r)throw new Error('No recipe found for that name.');
   return r;
 }

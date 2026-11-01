@@ -17,6 +17,7 @@ module.exports=async(req,res)=>{
   try{
     const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',
       headers:{Authorization:`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json'},
+      signal:AbortSignal.timeout(48000),
       body:JSON.stringify({model:MODEL,temperature:0,response_format:{type:'json_object'},reasoning:{enabled:false},
         messages:[{role:'system',content:PARSE},{role:'user',content:input}]})});
     const body=await r.text();
@@ -24,5 +25,5 @@ module.exports=async(req,res)=>{
       console.error('OpenRouter',r.status,body.slice(0,500));
       return res.status(502).json({error:`AI service error (${r.status}): ${String(msg||'unknown').slice(0,200)}`})}
     res.status(200).setHeader('Content-Type','application/json').send(body);
-  }catch{res.status(502).json({error:'Service unreachable. Try again.'})}
+  }catch(e){res.status(504).json({error:e.name==='TimeoutError'?'The AI took too long.':'Service unreachable.'})}
 };
