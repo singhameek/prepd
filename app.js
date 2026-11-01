@@ -1,5 +1,6 @@
 import {db,today,requestPersistence,autoRestore} from './db.js';
 import {parseIngredients} from './openrouterService.js';
+import {findRecipe} from './recipeFinder.js';
 import {deductIngredientsFromPantry,checkUpcomingMenuShortages,convertMetricToFractionalUI,restockFromGrocery} from './inventoryEngine.js';
 const $=(s,r=document)=>r.querySelector(s),m=$('#m');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -61,21 +62,41 @@ async function plan(slot,recipeId){
 }
 async function addSheet(slot){
   const label=SLOTS.find(s=>s[0]===slot)[1].toLowerCase(),saved=await db.recipes.toArray();
-  const sh=sheet(`<h3>Add ${label}</h3><input id="nm" placeholder="Meal name" autocomplete="off"><textarea id="tx" placeholder="Paste ingredients, one per line&#10;2 eggs&#10;a splash of milk&#10;a handful of spinach"></textarea><div class="err" id="er"></div><button id="go" style="width:100%">Add meal</button>${saved.length?`<h4>Saved meals</h4>${saved.map(r=>`<div class="row" data-row="${r.id}"><button class="r" data-r="${r.id}" style="flex:1;text-align:left;color:var(--ink);padding:0"><b>${esc(r.name)}</b><div class="s">${kcal(r)} kcal · tap to add</div></button><button class="r" data-del="${r.id}" style="padding:.4rem .6rem">Delete</button></div>`).join('')}`:''}`);
-  sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
+  const sh=sheet(`<h3>Add ${label}</h3><input id="nm" placeholder="Meal name, e.g. Paneer butter masala" autocomplete="off"><button class="g" id="find" style="width:100%;margin-bottom:.8rem">🔎 Find recipe online</button><textarea id="tx" placeholder="…or paste ingredients, one per line&#10;2 eggs&#10;a splash of milk"></textarea><div class="err" id="er"></div><button id="go" style="width:100%">Add meal</button>${saved.length?`<h4>Saved meals</h4>${saved.map(r=>`<div class="row" data-row="${r.id}"><button class="r" data-r="${r.id}" style="flex:1;text-align:left;color:var(--ink);padding:0"><b>${esc(r.name)}</b><div class="s">${kcal(r)} kcal · tap to add</div></button><button class="r" data-del="${r.id}" style="padding:.4rem .6rem">Delete</button></div>`).join('')}`:''}`);
+  const body=sh.q('.sb'),mainHTML=body.innerHTML;let rv,stash={};
+  const sc=n=>Math.round(n*rv.making/rv.yield*10)/10;
+  const draw=()=>{body.innerHTML=`<h3>Check ingredients</h3><div style="color:var(--mute);font-size:.88rem;margin-bottom:.7rem">From <a href="${esc(rv.url)}" target="_blank" rel="noopener" style="color:var(--acc)">${esc(new URL(rv.url).hostname.replace('www.',''))}</a> · original serves ${rv.yield}. Fix anything that looks off.</div><input id="nm" value="${esc(rv.name)}"><div class="f" style="align-items:center;margin-bottom:.8rem"><span>Servings I’m making</span><input id="mk" type="number" min="0.25" step="0.25" value="${rv.making}" style="margin:0"></div>${rv.items.map((i,k)=>`<div class="row"><div class="t"><b>${esc(i.name)}</b><div class="s">${esc(i.display)}</div></div><input class="qi" data-k="${k}" type="number" step="any" value="${sc(i.qty)}" style="width:5.2rem;margin:0"><span>${i.unit}</span><button class="r" data-rm="${k}" aria-label="Remove">✕</button></div>`).join('')}<div class="err" id="er"></div><button id="ok" style="width:100%">Add meal</button><button class="g" id="back" style="width:100%;margin-top:.5rem">Back</button>`};
+  sh.el.oninput=e=>{if(rv&&e.target.id==='nm')rv.name=e.target.value};
+  sh.el.onchange=e=>{if(!rv)return;const t=e.target;
+    if(t.id==='mk'){rv.making=Math.max(.25,+t.value||1);draw()}
+    if(t.classList.contains('qi'))rv.items[+t.dataset.k].qty=Math.max(0,+t.value||0)*rv.yield/rv.making};
+  const finish=async(name,text,ingredients,sourceUrl)=>{const id=await db.recipes.add({name,text,ingredients,sourceUrl});sh.close();plan(slot,id)};
+  sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const er=sh.q('#er');
     if(b.dataset.r){sh.close();plan(slot,+b.dataset.r)}
     if(b.dataset.del&&await confirmDel(b)){await delRecipe(+b.dataset.del);sh.q(`[data-row="${b.dataset.del}"]`).remove();render()}
-    if(b.id==='go'){const name=sh.q('#nm').value.trim(),text=sh.q('#tx').value.trim(),er=sh.q('#er');er.textContent='';
+    if(b.id==='find'){const name=sh.q('#nm').value.trim();er.textContent='';
+      if(!name)return sh.q('#nm').focus(),er.textContent='Type the meal name first.';
+      try{const f=await findRecipe(name,t=>busy(b,1,t));busy(b,1,'Checking ingredients…');
+        const items=await parseIngredients(f.lines.join('\n'));
+        stash={nm:name,tx:sh.q('#tx').value};rv={name,url:f.url,yield:f.yield,making:1,items};draw()}
+      catch(x){er.textContent=x.message+' Paste the ingredients below instead.';busy(b,0,'🔎 Find recipe online')}}
+    if(b.id==='back'){body.innerHTML=mainHTML;sh.q('#nm').value=rv.name;sh.q('#tx').value=stash.tx||'';rv=null}
+    if(b.dataset.rm){rv.items.splice(+b.dataset.rm,1);draw()}
+    if(b.id==='ok'){const items=rv.items.map(i=>({...i,qty:sc(i.qty),macros:Object.fromEntries(Object.entries(i.macros).map(([k,v])=>[k,Math.round(v*rv.making/rv.yield*10)/10]))})).filter(i=>i.qty>0);
+      const name=rv.name.trim();if(!name)return er.textContent='Give your meal a name.';
+      if(!items.length)return er.textContent='Keep at least one ingredient.';
+      finish(name,items.map(i=>`${i.qty} ${i.unit} ${i.name}`).join('\n'),items,rv.url)}
+    if(b.id==='go'){const name=sh.q('#nm').value.trim(),text=sh.q('#tx').value.trim();er.textContent='';
       if(!name)return sh.q('#nm').focus(),er.textContent='Give your meal a name.';
-      if(!text)return sh.q('#tx').focus(),er.textContent='Paste at least one ingredient.';
+      if(!text)return sh.q('#tx').focus(),er.textContent='Paste ingredients, or tap Find recipe online.';
       busy(b,1,'Reading ingredients…');
-      try{const ingredients=await parseIngredients(text),id=await db.recipes.add({name,text,ingredients});sh.close();plan(slot,id)}
-      catch(x){er.textContent=x.message;busy(b,0,'Add meal')}}};
+      try{await finish(name,text,await parseIngredients(text))}catch(x){er.textContent=x.message;busy(b,0,'Add meal')}}};
 }
 async function mealSheet(id){
   const p=await db.mealPlans.get(id),r=await db.recipes.get(p.recipeId);
   const sh=sheet(`<h3>Edit meal</h3><input id="nm" value="${esc(r.name)}"><textarea id="tx">${esc(r.text||'')}</textarea><div class="err" id="er"></div>
   <div class="s" style="color:var(--mute);font-size:.88rem;margin-bottom:1rem">${r.ingredients.map(i=>`${Math.round(i.qty)} ${i.unit} ${esc(i.name)}`).join(' · ')} — ${kcal(r)} kcal</div>
+  ${r.instructions?.length||r.source_url?`<details style="margin-bottom:1rem"><summary style="cursor:pointer;font-weight:600;color:var(--acc)">Recipe details</summary><div style="color:var(--mute);font-size:.88rem;margin:.5rem 0">${r.prep||r.cook?`Prep ${r.prep||0} min · Cook ${r.cook||0} min · `:''}1 serving${r.source_url?` · <a href="${esc(r.source_url)}" target="_blank" rel="noopener" style="color:var(--acc)">${esc(r.source_title||'Source')}</a>`:''}</div>${r.instructions?.length?`<ol style="padding-left:1.2rem;margin:0;font-size:.92rem">${r.instructions.map(x=>`<li style="margin-bottom:.35rem">${esc(x)}</li>`).join('')}</ol>`:''}</details>`:''}
   <div class="f"><button id="sv">Save changes</button>${p.logged?'':'<button class="g" id="eat">I ate this</button>'}</div><button class="r" id="rm" style="width:100%;margin-top:.4rem">Remove from plan</button><button class="r" id="dm" style="width:100%">Delete meal from all plans and saved meals</button>`);
   sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
     if(b.id==='rm'){await db.mealPlans.delete(id);sh.close();render()}
