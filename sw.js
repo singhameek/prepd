@@ -1,4 +1,4 @@
-const V='sk-v10',ASSETS=['./','index.html','app.js','db.js','openrouterService.js','inventoryEngine.js','recipeFinder.js','manifest.webmanifest','icon.svg'];
+const V='sk-v11',ASSETS=['./','index.html','app.js','db.js','openrouterService.js','inventoryEngine.js','recipeFinder.js','manifest.webmanifest','icon.svg'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(V).then(c=>c.addAll(ASSETS)));self.skipWaiting()});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(k=>Promise.all(k.filter(x=>x!==V).map(x=>caches.delete(x)))));self.clients.claim()});
 self.addEventListener('fetch',e=>{

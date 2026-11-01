@@ -1,5 +1,5 @@
 // Tiny allow-listed fetch proxy so the browser can read recipe sites (they block CORS). Not an open proxy.
-const ALLOW=['hebbarskitchen.com','indianhealthyrecipes.com','cookwithmanali.com','ministryofcurry.com','spiceupthecurry.com'];
+const ALLOW=['hebbarskitchen.com','cookwithmanali.com','ministryofcurry.com','spiceupthecurry.com','swasthisrecipes.com','vegrecipesofindia.com'];
 const ok=h=>ALLOW.some(d=>h===d||h.endsWith('.'+d));
 const hits=new Map();
 module.exports=async(req,res)=>{
@@ -10,7 +10,7 @@ module.exports=async(req,res)=>{
   let u;try{u=new URL(String(req.query.url||''))}catch{return res.status(400).json({error:'Bad URL'})}
   if(u.protocol!=='https:'||!ok(u.hostname))return res.status(403).json({error:'Site not allowed'});
   try{
-    const r=await fetch(u,{headers:{'User-Agent':'Mozilla/5.0 (compatible; PrepdBot/1.0)',Accept:'text/html,application/json'},signal:AbortSignal.timeout(9000)});
+    const r=await fetch(u,{headers:{'User-Agent':'Mozilla/5.0 (compatible; PrepdBot/1.0)',Accept:'text/html,application/json'},signal:AbortSignal.timeout(5000)});
     if(!ok(new URL(r.url).hostname))return res.status(403).json({error:'Redirect not allowed'});
     const t=(await r.text()).slice(0,2e6);
     res.status(r.status).setHeader('Content-Type',r.headers.get('content-type')||'text/plain').setHeader('Cache-Control','s-maxage=3600').send(t);
