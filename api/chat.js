@@ -2,8 +2,8 @@
 const MODEL='nvidia/nemotron-3.5-lightning:free';
 const PARSE=`You convert recipe ingredient lines into compact JSON. Reply with ONLY this JSON, no prose, no code fences:
 {"i":[["name",qty,"unit",kcal,protein,carbs,fat,always]]}
-Give one entry per input line, in the same order (a line listing several ingredients gives several entries). name: lowercase singular common name. qty: number in grams or millilitres, or a count for countable items. unit: "g", "ml" or "pcs". kcal/protein/carbs/fat are for the whole quantity. always: 1 only for tap water or ice, otherwise 0 (salt, oil, spices are 0).
-Convert vague amounts (splash, handful, pinch, cloves, to taste) to realistic metric estimates. Many recipes are South Asian: understand ghee, paneer, atta, besan, dal varieties, jeera, haldi, hing, garam masala, curry leaves etc. Use 1 cup=240 ml, 1 tbsp=15 ml, 1 tsp=5 ml; "to taste" means a small amount (salt 3 g); "1 inch ginger" is about 5 g.`;
+Every input line MUST produce at least one entry; never skip an ingredient. Give one entry per input line, in the same order (a line listing several ingredients gives several entries). name: lowercase singular common name. qty: a number in that unit. unit: "g", "ml", "pcs", "tsp", "tbsp" or "cup". Keep the recipe\'s own tsp, tbsp or cup unit when it uses one (write fractions as decimals, e.g. 1/2 cup = 0.5); use g for weighed items, ml for other liquids, pcs for countable items. kcal/protein/carbs/fat are for the whole quantity. always: 1 only for tap water or ice, otherwise 0 (salt, oil, spices are 0).
+Convert vague amounts (splash, handful, pinch, cloves, to taste) to realistic amounts. Many recipes are South Asian: understand ghee, paneer, atta, besan, dal varieties, jeera, haldi, hing, garam masala, curry leaves etc. (1 cup=240 ml, 1 tbsp=15 ml, 1 tsp=5 ml, for macro estimates); "to taste" means a small amount (salt 3 g); "1 inch ginger" is about 5 g.`;
 const hits=new Map();
 module.exports=async(req,res)=>{
   if(req.method==='GET')return res.status(200).json({ok:true,keySet:!!process.env.OPENROUTER_API_KEY});
@@ -17,7 +17,7 @@ module.exports=async(req,res)=>{
   try{
     const r=await fetch('https://openrouter.ai/api/v1/chat/completions',{method:'POST',
       headers:{Authorization:`Bearer ${process.env.OPENROUTER_API_KEY}`,'Content-Type':'application/json'},
-      body:JSON.stringify({model:MODEL,temperature:0,max_tokens:1500,response_format:{type:'json_object'},reasoning:{enabled:false},
+      body:JSON.stringify({model:MODEL,temperature:0,response_format:{type:'json_object'},reasoning:{enabled:false},
         messages:[{role:'system',content:PARSE},{role:'user',content:input}]})});
     const body=await r.text();
     if(!r.ok){let msg;try{const e=JSON.parse(body).error;msg=e?.message||e}catch{}

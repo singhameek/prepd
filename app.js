@@ -2,6 +2,7 @@ import {db,today,requestPersistence,autoRestore} from './db.js';
 import {parseIngredients} from './openrouterService.js';
 import {findRecipe} from './recipeFinder.js';
 import {deductIngredientsFromPantry,checkUpcomingMenuShortages,convertMetricToFractionalUI,restockFromGrocery} from './inventoryEngine.js';
+const UNITS=['g','ml','pcs','tsp','tbsp','cup'],q1=n=>+(+n).toFixed(1);
 const $=(s,r=document)=>r.querySelector(s),m=$('#m');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const SLOTS=[['breakfast','Breakfast','--b','🍳'],['lunch','Lunch','--l','🥪'],['dinner','Dinner','--d','🍝']];
@@ -95,7 +96,7 @@ async function addSheet(slot){
 async function mealSheet(id){
   const p=await db.mealPlans.get(id),r=await db.recipes.get(p.recipeId);
   const sh=sheet(`<h3>Edit meal</h3><input id="nm" value="${esc(r.name)}"><textarea id="tx">${esc(r.text||'')}</textarea><div class="err" id="er"></div>
-  <div class="s" style="color:var(--mute);font-size:.88rem;margin-bottom:1rem">${r.ingredients.map(i=>`${Math.round(i.qty)} ${i.unit} ${esc(i.name)}`).join(' · ')} — ${kcal(r)} kcal</div>
+  <div class="s" style="color:var(--mute);font-size:.88rem;margin-bottom:1rem">${r.ingredients.map(i=>`${q1(i.qty)} ${i.unit} ${esc(i.name)}`).join(' · ')} — ${kcal(r)} kcal</div>
   ${r.instructions?.length||r.source_url?`<details style="margin-bottom:1rem"><summary style="cursor:pointer;font-weight:600;color:var(--acc)">Recipe details</summary><div style="color:var(--mute);font-size:.88rem;margin:.5rem 0">${r.prep||r.cook?`Prep ${r.prep||0} min · Cook ${r.cook||0} min · `:''}1 serving${r.source_url?` · <a href="${esc(r.source_url)}" target="_blank" rel="noopener" style="color:var(--acc)">${esc(r.source_title||'Source')}</a>`:''}</div>${r.instructions?.length?`<ol style="padding-left:1.2rem;margin:0;font-size:.92rem">${r.instructions.map(x=>`<li style="margin-bottom:.35rem">${esc(x)}</li>`).join('')}</ol>`:''}</details>`:''}
   <div class="f"><button id="sv">Save changes</button>${p.logged?'':'<button class="g" id="eat">I ate this</button>'}</div><button class="r" id="rm" style="width:100%;margin-top:.4rem">Remove from plan</button><button class="r" id="dm" style="width:100%">Delete meal from all plans and saved meals</button>`);
   sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
@@ -111,18 +112,18 @@ async function mealSheet(id){
 }
 async function renderPantry(){
   const it=await db.pantryItems.toArray();head('Pantry',it.length?`${it.length} item${it.length>1?'s':''}`:'');
-  m.innerHTML=it.length?it.map(i=>{const p=i.capacity?Math.min(1,i.qty/i.capacity):1;return `<button class="row" data-i="${i.id}"><div class="t"><b>${esc(i.name)}</b> <span class="s">${convertMetricToFractionalUI(i.qty,i.capacity)} · ${Math.round(i.qty)} ${i.unit}</span><div class="bt"><div class="bf ${p<.2?'low':''}" style="width:${p*100}%"></div></div></div></button>`}).join('')
+  m.innerHTML=it.length?it.map(i=>{const p=i.capacity?Math.min(1,i.qty/i.capacity):1;return `<button class="row" data-i="${i.id}"><div class="t"><b>${esc(i.name)}</b> <span class="s">${convertMetricToFractionalUI(i.qty,i.capacity)} · ${q1(i.qty)} ${i.unit}</span><div class="bt"><div class="bf ${p<.2?'low':''}" style="width:${p*100}%"></div></div></div></button>`}).join('')
    :'<div class="empty" data-e="🧺"><b>Your pantry is empty</b>Add what you have, or tick off groceries to stock it.</div>';
   m.innerHTML+='<button class="fab" data-new aria-label="Add item">+</button>';
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
     if('new'in b.dataset)itemSheet();else if(b.dataset.i)itemSheet(await db.pantryItems.get(+b.dataset.i))};
 }
 function itemSheet(it){
-  const sh=sheet(`<h3>${it?'Edit item':'Add to pantry'}</h3><input id="nm" placeholder="Name" value="${it?esc(it.name):''}"><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount" value="${it?Math.round(it.qty):''}"><input id="u" value="${it?it.unit:'g'}" list="us"><datalist id="us"><option>g<option>ml<option>pcs</datalist></div><div class="err" id="er"></div><button id="sv" style="width:100%">${it?'Save':'Add item'}</button>${it?'<button class="r" id="rm" style="width:100%;margin-top:.4rem">Remove</button>':''}`);
+  const sh=sheet(`<h3>${it?'Edit item':'Add to pantry'}</h3><input id="nm" placeholder="Name" value="${it?esc(it.name):''}"><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount" value="${it?q1(it.qty):''}"><input id="u" value="${it?it.unit:'g'}" list="us"><datalist id="us"><option>g<option>ml<option>pcs<option>tsp<option>tbsp<option>cup</datalist></div><div class="err" id="er"></div><button id="sv" style="width:100%">${it?'Save':'Add item'}</button>${it?'<button class="r" id="rm" style="width:100%;margin-top:.4rem">Remove</button>':''}`);
   sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
     if(b.id==='rm'){await db.pantryItems.delete(it.id);sh.close();render()}
     if(b.id==='sv'){const name=sh.q('#nm').value.trim(),qty=+sh.q('#q').value,unit=sh.q('#u').value;
-      if(!name||!(qty>0)||!['g','ml','pcs'].includes(unit))return sh.q('#er').textContent='Enter a name, an amount, and unit g, ml or pcs.';
+      if(!name||!(qty>0)||!UNITS.includes(unit))return sh.q('#er').textContent='Enter a name, an amount, and unit g, ml, pcs, tsp, tbsp or cup.';
       it?await db.pantryItems.update(it.id,{name,qty,unit,capacity:Math.max(it.capacity||0,qty)}):await db.pantryItems.add({name,qty,unit,capacity:qty});
       sh.close();render()}};
 }
@@ -133,9 +134,9 @@ async function renderGrocery(){
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
     if(d.buy||d.x){const row=$(`[data-row="${d.buy||d.x}"]`);if(d.buy){b.classList.add('on');b.textContent='✓';await new Promise(r=>setTimeout(r,250));await restockFromGrocery(+d.buy);toast('Moved to pantry')}else await db.groceryList.delete(+d.x);
       row.classList.add('gone');setTimeout(render,300)}
-    if('new'in d){const sh=sheet(`<h3>Add to list</h3><input id="nm" placeholder="Name"><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount"><input id="u" value="g" list="us"><datalist id="us"><option>g<option>ml<option>pcs</datalist></div><div class="err" id="er"></div><button id="sv" style="width:100%">Add to list</button>`);
+    if('new'in d){const sh=sheet(`<h3>Add to list</h3><input id="nm" placeholder="Name"><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount"><input id="u" value="g" list="us"><datalist id="us"><option>g<option>ml<option>pcs<option>tsp<option>tbsp<option>cup</datalist></div><div class="err" id="er"></div><button id="sv" style="width:100%">Add to list</button>`);
       sh.el.onclick=async ev=>{if(ev.target.id!=='sv')return;const name=sh.q('#nm').value.trim(),qty=+sh.q('#q').value,unit=sh.q('#u').value;
-        if(!name||!(qty>0)||!['g','ml','pcs'].includes(unit))return sh.q('#er').textContent='Enter a name, an amount, and unit g, ml or pcs.';
+        if(!name||!(qty>0)||!UNITS.includes(unit))return sh.q('#er').textContent='Enter a name, an amount, and unit g, ml, pcs, tsp, tbsp or cup.';
         await db.groceryList.add({name,qty,unit,checked:0});sh.close();render()}}};
 }
 async function render(){
