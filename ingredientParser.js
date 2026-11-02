@@ -1,5 +1,6 @@
 // Offline ingredient parser: wraps ingredient-engine.js (no network, no AI, instant).
 import {parseIngredients as parse,getIngredient} from './ingredient-engine.js';
+import {apply as applyCorrections,prefetch} from './corrections.js';
 // The engine's own data is thin for South Asian staples (e.g. it treats 1 cup atta as 240 g and ghee as 1 kcal/g),
 // so common ones are corrected here: [pattern, g per ml, kcal/100g, protein, carbs, fat].
 const OV=[
@@ -25,9 +26,11 @@ function measure(it){
 // Keeps the unit the recipe used: cups/tsp/tbsp for spoon-and-cup lines, pcs for countable things (potato, onion, egg).
 export async function parseIngredients(text){
   const lines=String(text).split('\n').map(s=>s.trim()).filter(Boolean),out=[];
+  await prefetch(lines);   // fixes other users agreed on, if any
   for(const line of lines){
     let items=[];try{items=parse(line)}catch{}
     if(!items.length)throw new Error(`Couldn't read: “${line.slice(0,40)}”. Try something like “2 cups flour”.`);
+    const made=[];
     for(const it of items){
       const m=measure(it),name=String(it.name).toLowerCase(),u=(m.mb.match(/unit:(cup|tsp|tbsp)\b/)||[])[1];
       let qty,unit,d=null,pc=null;
@@ -35,9 +38,10 @@ export async function parseIngredients(text){
       else if(/\bpiece\b/.test(m.mb)&&getIngredient(name)?.piece>0){
         pc=getIngredient(name).piece;qty=Math.max(.5,Math.round(m.g/pc*2)/2);unit='pcs'}
       else{unit=it.unit==='ml'?'ml':'g';qty=r1(it.unit==='ml'?it.quantity:m.g)||1;if(m.ml&&m.d)d=+m.d.toFixed(3)}
-      out.push({name,qty,unit,staple:false,taste:it.always===true,display:line,d,pc,
+      made.push({name,qty,unit,staple:false,taste:it.always===true,display:line,d,pc,
         macros:{calories:r1(m.nut.kcal),protein:r1(m.nut.protein),carbs:r1(m.nut.carbs),fat:r1(m.nut.fat)}});
     }
+    out.push(...applyCorrections(line,made));   // what this user (or the community) corrected before
   }
   if(!out.length)throw new Error('Paste at least one ingredient.');
   return out;

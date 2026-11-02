@@ -1,24 +1,25 @@
 import {db,today} from './db.js';
 import {getIngredient} from './ingredient-engine.js';
-export const UNITS=['g','ml','pcs','tsp','tbsp','cup'];
+export const UNITS=['g','kg','oz','lb','ml','l','tsp','tbsp','cup','pcs'];
 // Every quantity is converted through grams, using per-ingredient data: grams per piece and grams per ml.
 // Sources, in order: learned/looked-up profiles (shared via the cloud), the parser's built-in table, then a default.
 // So 3 pcs of potato in the pantry matches 500 g in a recipe, and 2 cups atta matches 5 kg atta.
-const F={g:1,ml:1,pcs:1,tsp:5,tbsp:15,cup:240};
+const MASS={g:1,kg:1000,oz:28.3495,lb:453.592},VOLU={ml:1,l:1000,tsp:5,tbsp:15,cup:240};
 let prof={};const unresolved=new Set();
 export const setProfiles=p=>{prof=p||{}};
 export const getProfiles=()=>prof;
 export const takeUnresolved=()=>{const a=[...unresolved];unresolved.clear();return a};
 const known=n=>{try{return getIngredient(String(n).toLowerCase())}catch{return null}};
 const gp=(u,n)=>{
-  if(u==='g')return 1;
+  if(MASS[u])return MASS[u];
   const k=nk(n),p=prof[k];
   if(u==='pcs'){const w=p?.pc??known(n)?.piece;if(w>0)return w;if(!p?.tried)unresolved.add(k);return 100}
   const d=p?.d??known(n)?.density;
-  if(!(d>0)){if(!p?.tried)unresolved.add(k);return F[u]||1}
-  return (F[u]||1)*d;
+  if(!(d>0)){if(!p?.tried)unresolved.add(k);return VOLU[u]||1}
+  return (VOLU[u]||1)*d;
 };
-const baseUnit=u=>u==='pcs'?'pcs':u==='g'?'g':'ml';
+const baseUnit=u=>u==='pcs'?'pcs':MASS[u]?'g':'ml';
+export const toGrams=(q,u,n)=>q*gp(u,n);
 // Name matching: ignores case, plurals and common synonyms so "Onions" = "onion" and "curd" = "yogurt".
 const SYN=[[/^(whole )?wheat flour$|^atta$|^chapati flour$/,'atta'],[/^(curd|dahi|yogh?urt|plain yogh?urt)$/,'curd'],[/^(coriander leaves?|cilantro|dhania)$/,'cilantro'],
  [/^(capsicum|bell peppers?)$/,'bell pepper'],[/^(green )?chil+(i|ies|y|is|es)?$|^green chil+(i|ies|y|is|es)?$/,'green chili'],[/^(jeera|cumin|cumin seeds?)$/,'cumin'],

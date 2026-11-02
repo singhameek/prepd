@@ -1,11 +1,11 @@
 // Tiny allow-listed fetch proxy so the browser can read recipe sites (they block CORS). Not an open proxy.
-const ALLOW=['hebbarskitchen.com','cookwithmanali.com','ministryofcurry.com','spiceupthecurry.com'];
+const ALLOW=['africanbites.com', 'aromaticessence.co', 'budgetbytes.com', 'cafedelites.com', 'cookingwithayeh.com', 'cookwithmanali.com', 'damndelicious.net', 'daringgourmet.com', 'feelgoodfoodie.net', 'hebbarskitchen.com', 'hot-thai-kitchen.com', 'hungryhuy.com', 'isabeleats.com', 'italianrecipebook.com', 'justonecookbook.com', 'laylita.com', 'maangchi.com', 'marionskitchen.com', 'mexicoinmykitchen.com', 'ministryofcurry.com', 'mycolombianrecipes.com', 'mydiasporakitchen.com', 'mymoroccanfood.com', 'natashaskitchen.com', 'omnivorescookbook.com', 'preciouscore.com', 'rasamalaysia.com', 'sisijemimah.com', 'spendwithpennies.com', 'spiceupthecurry.com', 'thecookierookie.com', 'themediterraneandish.com', 'thewoksoflife.com', 'whiskaffair.com'];
 const ok=h=>ALLOW.some(d=>h===d||h.endsWith('.'+d));
 const hits=new Map();
 module.exports=async(req,res)=>{
   const ip=(req.headers['x-forwarded-for']||'').split(',')[0]||'x',now=Date.now();
   const h=(hits.get(ip)||[]).filter(t=>now-t<6e4);
-  if(h.length>=40)return res.status(429).json({error:'Too many requests'});
+  if(h.length>=120)return res.status(429).json({error:'Too many requests'});
   h.push(now);hits.set(ip,h);
   let u;try{u=new URL(String(req.query.url||''))}catch{return res.status(400).json({error:'Bad URL'})}
   if(u.protocol!=='https:'||!ok(u.hostname))return res.status(403).json({error:'Site not allowed'});

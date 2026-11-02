@@ -3,8 +3,12 @@ import {parseIngredients} from './ingredientParser.js';
 import {findRecipe} from './recipeFinder.js';
 import * as cloud from './cloud.js';
 import {resolveUnits,learn,loadProfiles} from './units.js';
-import {deductIngredientsFromPantry,checkUpcomingMenuShortages,convertMetricToFractionalUI,restockFromGrocery,groceryText,planScale,isStaple,pkgFor,setPrefs,sizeText} from './inventoryEngine.js';
-const UNITS=['g','ml','pcs','tsp','tbsp','cup'],q1=n=>+(+n).toFixed(1);
+import {splitSteps,detectTimers,fmtTime} from './steps.js';
+import * as timers from './timers.js';
+import {loadCorrections,learn as learnCorr} from './corrections.js';
+import {UNITS,deductIngredientsFromPantry,checkUpcomingMenuShortages,convertMetricToFractionalUI,restockFromGrocery,groceryText,planScale,isStaple,pkgFor,setPrefs,sizeText} from './inventoryEngine.js';
+const q1=n=>+(+n).toFixed(1);
+const unitSel=(id,sel='g',extra='',list=UNITS)=>`<select ${id?`id="${id}"`:''} ${extra}>${list.map(u=>`<option value="${u}"${u===sel?' selected':''}>${u==='l'?'L':u}</option>`).join('')}</select>`;
 const $=(s,r=document)=>r.querySelector(s),m=$('#m');
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const SLOTS=[['breakfast','Breakfast','--b','🍳'],['lunch','Lunch','--l','🥪'],['dinner','Dinner','--d','🍝']];
@@ -70,47 +74,78 @@ async function plan(slot,recipeId,portions=1){
 }
 async function addSheet(slot){
   const label=SLOTS.find(s=>s[0]===slot)[1].toLowerCase(),saved=await db.recipes.toArray();
-  const sh=sheet(`<h3>Add ${label}</h3><input id="nm" placeholder="Meal name, e.g. Paneer butter masala" autocomplete="off"><button class="g" id="find" style="width:100%;margin-bottom:.8rem">🔎 Find recipe online</button><textarea id="tx" placeholder="…or paste ingredients, one per line&#10;2 eggs&#10;a splash of milk"></textarea><div class="f" style="align-items:center"><span>This dish serves</span><input id="sr" type="number" min="1" step="1" value="1" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="pp" type="number" min="0.5" step="0.5" value="1" style="margin:0"></div><div class="err" id="er"></div><button id="go" style="width:100%">Add meal</button>${saved.length?`<h4>Saved meals</h4>${saved.map(r=>`<div class="row" data-row="${r.id}"><button class="r" data-r="${r.id}" style="flex:1;text-align:left;color:var(--ink);padding:0"><b>${esc(r.name)}</b><div class="s">${kcal(r)} kcal · tap to add</div></button><button class="r" data-del="${r.id}" style="padding:.4rem .6rem">Delete</button></div>`).join('')}`:''}`);
+  const sh=sheet(`<h3>Add ${label}</h3><input id="nm" placeholder="Meal name, e.g. Paneer butter masala" autocomplete="off"><button class="g" id="find" style="width:100%;margin-bottom:.8rem">🔎 Find recipe online</button><textarea id="tx" placeholder="…or paste ingredients, one per line&#10;2 eggs&#10;a splash of milk"></textarea><details class="fold" style="margin:.2rem 0 .8rem"><summary>Steps <span class="s" style="font-weight:500">optional</span></summary><textarea id="stx" placeholder="One step per line, e.g.&#10;Heat oil and add cumin.&#10;Simmer for 10 minutes." style="min-height:7rem"></textarea></details><div class="f" style="align-items:center"><span>This dish serves</span><input id="sr" type="number" min="1" step="1" value="1" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="pp" type="number" min="0.5" step="0.5" value="1" style="margin:0"></div><div class="err" id="er"></div><button id="go" style="width:100%">Add meal</button>${saved.length?`<h4>Saved meals</h4>${saved.map(r=>`<div class="row" data-row="${r.id}"><button class="r" data-r="${r.id}" style="flex:1;text-align:left;color:var(--ink);padding:0"><b>${esc(r.name)}</b><div class="s">${kcal(r)} kcal · tap to add</div></button><button class="r" data-del="${r.id}" style="padding:.4rem .6rem">Delete</button></div>`).join('')}`:''}`);
   const body=sh.q('.sb'),mainHTML=body.innerHTML;let rv,stash={};
-  const draw=()=>{body.innerHTML=`<h3>Check ingredients</h3><div style="color:var(--mute);font-size:.88rem;margin-bottom:.7rem">From ${rv.url?`<a href="${esc(rv.url)}" target="_blank" rel="noopener" style="color:var(--acc)">${esc(new URL(rv.url).hostname.replace('www.',''))}</a>`:'the Prepd community'} · whole recipe. Fix anything that looks off.</div><input id="nm" value="${esc(rv.name)}"><div class="f" style="align-items:center"><span>This dish serves</span><input id="yd" type="number" min="1" step="1" value="${rv.yield}" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="mk" type="number" min="0.25" step="0.25" value="${rv.making}" style="margin:0"></div>${rv.items.map((i,k)=>`<div class="row"><div class="t"><b>${esc(i.name)}</b><div class="s">${esc(i.display)}</div></div><input class="qi" data-k="${k}" type="number" step="any" value="${q1(i.qty)}" style="width:5.2rem;margin:0"><span>${i.unit}</span><button class="r" data-rm="${k}" aria-label="Remove">✕</button></div>`).join('')}<div class="err" id="er"></div><button id="ok" style="width:100%">Add meal</button><button class="g" id="back" style="width:100%;margin-top:.5rem">Back</button>`};
+  const draw=()=>{body.innerHTML=`<h3>Check ingredients</h3><div style="color:var(--mute);font-size:.88rem;margin-bottom:.7rem">From ${rv.url?`<a href="${esc(rv.url)}" target="_blank" rel="noopener" style="color:var(--acc)">${esc(new URL(rv.url).hostname.replace('www.',''))}</a>`:'the Prepd community'} · whole recipe${rv.steps?.length?` · ${rv.steps.length} steps found`:''}. Fix anything that looks off; Prepd learns from your fixes.</div><input id="nm" value="${esc(rv.name)}"><div class="f" style="align-items:center"><span>This dish serves</span><input id="yd" type="number" min="1" step="1" value="${rv.yield}" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="mk" type="number" min="0.25" step="0.25" value="${rv.making}" style="margin:0"></div>${rv.items.map((i,k)=>`<div class="row rvr"><div class="t"><input class="ni" data-k="${k}" value="${esc(i.name)}" aria-label="Ingredient name"><div class="s" style="margin-bottom:.4rem">${esc(i.display||'')}</div><div class="f"><input class="qi" data-k="${k}" type="number" step="any" inputmode="decimal" value="${q1(i.qty)}" aria-label="Amount">${unitSel('',i.unit,`class="ui" data-k="${k}" aria-label="Unit"`)}</div></div><button class="r" data-rm="${k}" aria-label="Remove">✕</button></div>`).join('')}<div class="err" id="er"></div><button id="ok" style="width:100%">Add meal</button><button class="g" id="back" style="width:100%;margin-top:.5rem">Back</button>`};
   sh.el.oninput=e=>{if(rv&&e.target.id==='nm')rv.name=e.target.value};
   sh.el.onchange=e=>{if(!rv)return;const t=e.target;
     if(t.id==='mk')rv.making=Math.max(.25,+t.value||1);
     if(t.id==='yd')rv.yield=Math.max(1,Math.round(+t.value)||1);
-    if(t.classList.contains('qi'))rv.items[+t.dataset.k].qty=Math.max(0,+t.value||0)};
-  const finish=async(name,text,ingredients,sourceUrl,servings=1,portions=1,share=true)=>{const id=await db.recipes.add({name,text,ingredients,sourceUrl,servings});
-    const on=share&&await shareOn();learn(ingredients,on);if(on)cloud.shareRecipe(name,ingredients,servings,sourceUrl);sh.close();plan(slot,id,portions)};
+    if(t.classList.contains('qi'))rv.items[+t.dataset.k].qty=Math.max(0,+t.value||0);
+    if(t.classList.contains('ui'))rv.items[+t.dataset.k].unit=t.value;
+    if(t.classList.contains('ni')){const it=rv.items[+t.dataset.k];it.name=t.value.trim()||it.name;t.value=it.name}};
+  const finish=async(name,text,ingredients,sourceUrl,servings=1,portions=1,share=true,steps=[])=>{const id=await db.recipes.add({name,text,ingredients,sourceUrl,servings,steps});
+    const on=share&&await shareOn();learn(ingredients,on);if(on)cloud.shareRecipe(name,ingredients,servings,sourceUrl,steps);sh.close();plan(slot,id,portions)};
   sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const er=sh.q('#er');
     if(b.dataset.r){const pp=Math.max(.25,+sh.q('#pp')?.value||1);sh.close();plan(slot,+b.dataset.r,pp)}
     if(b.dataset.del&&await confirmDel(b)){await delRecipe(+b.dataset.del);sh.q(`[data-row="${b.dataset.del}"]`).remove();render()}
     if(b.id==='find'){const name=sh.q('#nm').value.trim();er.textContent='';
       if(!name)return sh.q('#nm').focus(),er.textContent='Type the meal name first.';
       try{const c=await cloud.findCommunity(name);
-        if(c){stash={nm:name,tx:sh.q('#tx').value};rv={name,url:'',yield:c.yield,making:1,items:c.items,community:true};draw()}
+        if(c){stash={nm:name,tx:sh.q('#tx').value};rv={name,url:'',yield:c.yield,making:1,items:c.items,community:true,removed:[],steps:c.steps||[]};draw()}
         else{const f=await findRecipe(name,t=>busy(b,1,t));busy(b,1,'Checking ingredients…');
           const items=await parseIngredients(f.lines.join('\n'));
-          stash={nm:name,tx:sh.q('#tx').value};rv={name,url:f.url,yield:f.yield,making:1,items};draw()}}
+          stash={nm:name,tx:sh.q('#tx').value};rv={name,url:f.url,yield:f.yield,making:1,removed:[],steps:f.steps||[],items:items.map(i=>({...i,orig:{name:i.name,qty:i.qty,unit:i.unit}}))};draw()}}
       catch(x){er.textContent=x.message+' Paste the ingredients below instead.';busy(b,0,'🔎 Find recipe online')}}
     if(b.id==='back'){body.innerHTML=mainHTML;sh.q('#nm').value=rv.name;sh.q('#tx').value=stash.tx||'';rv=null}
-    if(b.dataset.rm){rv.items.splice(+b.dataset.rm,1);draw()}
+    if(b.dataset.rm){rv.removed.push(...rv.items.splice(+b.dataset.rm,1));draw()}
     if(b.id==='ok'){const items=rv.items.map(i=>({...i})).filter(i=>i.qty>0);
       const name=rv.name.trim();if(!name)return er.textContent='Give your meal a name.';
       if(!items.length)return er.textContent='Keep at least one ingredient.';
-      finish(name,items.map(i=>`${q1(i.qty)} ${i.unit} ${i.name}`).join('\n'),items,rv.url,rv.yield,rv.making,!rv.community)}
+      if(!rv.community)await learnCorr(items,rv.removed||[]);   // remember the user's fixes
+      finish(name,items.map(i=>`${q1(i.qty)} ${i.unit} ${i.name}`).join('\n'),items.map(({orig,...i})=>i),rv.url,rv.yield,rv.making,!rv.community,rv.steps||[])}
     if(b.id==='go'){const name=sh.q('#nm').value.trim(),text=sh.q('#tx').value.trim();er.textContent='';
       if(!name)return sh.q('#nm').focus(),er.textContent='Give your meal a name.';
       if(!text)return sh.q('#tx').focus(),er.textContent='Paste ingredients, or tap Find recipe online.';
       busy(b,1,'Reading ingredients…');
       const serves=Math.max(1,Math.round(+sh.q('#sr').value)||1),portions=Math.max(.25,+sh.q('#pp').value||1);
-      try{await finish(name,text,await parseIngredients(text),'',serves,portions)}catch(x){er.textContent=x.message;busy(b,0,'Add meal')}}};
+      try{await finish(name,text,await parseIngredients(text),'',serves,portions,true,splitSteps(sh.q('#stx')?.value||''))}catch(x){er.textContent=x.message;busy(b,0,'Add meal')}}};
 }
+// Steps in order, with a timer button wherever a step mentions a time.
+function stepsSheet(r,steps){
+  const key=(i,k)=>`${r.id}:${i}:${k}`;
+  const sh=sheet(`<h3>${esc(r.name)}</h3><div style="color:var(--mute);font-size:.9rem;margin:-.4rem 0 .9rem">${steps.length} step${steps.length===1?'':'s'} · tap the circle when one is done</div>${steps.map((t,i)=>`<div class="step"><button class="chk" data-done="${i}" aria-label="Mark step ${i+1} done"></button><div class="t"><div class="sn">Step ${i+1}</div><p>${esc(t)}</p>${detectTimers(t).map((d,k)=>`<button class="tm" data-tk="${key(i,k)}" data-secs="${d.seconds}" data-lab="${esc(d.label)}">⏱ ${esc(d.label)}</button>`).join('')}</div></div>`).join('')}`);
+  const upd=()=>{if(!document.body.contains(sh.el)){off();return}
+    sh.el.querySelectorAll('.tm').forEach(b=>{const t=timers.find(b.dataset.tk);b.classList.toggle('run',!!t);
+      b.textContent=t?`⏱ ${b.dataset.lab.split(' · ')[0]} · ${fmtTime(timers.left(t))}`:`⏱ ${b.dataset.lab}`})};
+  const off=timers.onTick(upd);upd();
+  sh.el.onclick=e=>{const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.done!==undefined){const on=b.closest('.step').classList.toggle('done');b.classList.toggle('on',on);b.textContent=on?'✓':''}
+    if(b.dataset.tk){
+      if(timers.find(b.dataset.tk))timers.stop(b.dataset.tk);
+      else{timers.start(b.dataset.tk,`${r.name} · ${b.dataset.lab.split(' · ')[0]}`,+b.dataset.secs);toast('Timer started');
+        if(Notification?.permission==='default')Notification.requestPermission()}}};
+}
+function drawTimers(){
+  $('#tb').innerHTML=timers.all().map(t=>`<div class="tchip"><span>⏱ ${esc(t.label)} · ${fmtTime(timers.left(t))}</span><button data-stop="${esc(t.id)}" aria-label="Stop timer">✕</button></div>`).join('');
+}
+$('#tb').onclick=e=>{const id=e.target.closest('button')?.dataset.stop;if(id)timers.stop(id)};
+timers.onTick(drawTimers);
+addEventListener('prepd-timer-done',async e=>{
+  const t=e.detail;toast(`⏱ ${t.label} is done!`);drawTimers();
+  if(Notification?.permission==='granted'){try{const reg=await navigator.serviceWorker?.ready,o={body:t.label,tag:'timer-'+t.id,icon:'icon-192.png',vibrate:[300,150,300]};
+    reg?reg.showNotification('Timer done',o):new Notification('Timer done',o)}catch{}}
+});
 async function mealSheet(id){
   const p=await db.mealPlans.get(id),r=await db.recipes.get(p.recipeId);
+  const steps0=r.steps?.length?r.steps:(r.instructions||[]);
   const sh=sheet(`<h3>Edit meal</h3><input id="nm" value="${esc(r.name)}"><textarea id="tx">${esc(r.text||'')}</textarea><div class="f" style="align-items:center"><span>This dish serves</span><input id="sr" type="number" min="1" step="1" value="${r.servings||1}" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="pp" type="number" min="0.5" step="0.5" value="${p.portions??(p.scale||1)*(r.servings||1)}" style="margin:0"></div><div class="err" id="er"></div>
   <div class="s" style="color:var(--mute);font-size:.88rem;margin-bottom:1rem">${r.ingredients.map(i=>`${q1(i.qty)} ${i.unit} ${esc(i.name)}`).join(' · ')} — ${kcal(r)} kcal total · ${Math.round(kcal(r)/(r.servings||1))} per serving</div>
-  ${r.instructions?.length||r.source_url?`<details style="margin-bottom:1rem"><summary style="cursor:pointer;font-weight:600;color:var(--acc)">Recipe details</summary><div style="color:var(--mute);font-size:.88rem;margin:.5rem 0">${r.prep||r.cook?`Prep ${r.prep||0} min · Cook ${r.cook||0} min · `:''}${r.servings||1} serving${(r.servings||1)>1?'s':''}${r.source_url?` · <a href="${esc(r.source_url)}" target="_blank" rel="noopener" style="color:var(--acc)">${esc(r.source_title||'Source')}</a>`:''}</div>${r.instructions?.length?`<ol style="padding-left:1.2rem;margin:0;font-size:.92rem">${r.instructions.map(x=>`<li style="margin-bottom:.35rem">${esc(x)}</li>`).join('')}</ol>`:''}</details>`:''}
-  <div class="f"><button id="sv">Save changes</button>${p.logged?'':'<button class="g" id="eat">I ate this</button>'}</div><button class="r" id="rm" style="width:100%;margin-top:.4rem">Remove from plan</button><button class="r" id="dm" style="width:100%">Delete meal from all plans and saved meals</button>`);
+  ${r.source_url?`<div style="color:var(--mute);font-size:.88rem;margin-bottom:.8rem">Source: <a href="${esc(r.source_url)}" target="_blank" rel="noopener" style="color:var(--acc)">${esc(r.source_title||new URL(r.source_url).hostname.replace('www.',''))}</a></div>`:''}
+  <details class="fold" style="margin-bottom:.8rem"><summary>Steps <span class="s" style="font-weight:500">${steps0.length||'none yet'}</span></summary><textarea id="stx" placeholder="One step per line…" style="min-height:8rem">${esc(steps0.join('\n'))}</textarea></details>
+  <div class="f"><button id="sv">Save changes</button>${p.logged?'':'<button class="g" id="eat">I ate this</button>'}</div>${steps0.length?'<button class="g" id="cook" style="width:100%;margin-top:.5rem">📖 View steps &amp; timers</button>':''}<button class="r" id="rm" style="width:100%;margin-top:.4rem">Remove from plan</button><button class="r" id="dm" style="width:100%">Delete meal from all plans and saved meals</button>`);
   sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
+    if(b.id==='cook')stepsSheet(r,steps0);
     if(b.id==='rm'){await db.mealPlans.delete(id);await sync();sh.close();render()}
     if(b.id==='dm'&&await confirmDel(b)){await delRecipe(r.id);await sync();sh.close();toast('Meal deleted');render()}
     if(b.id==='eat'){await sync();const {missing}=await deductIngredientsFromPantry(r.id,planScale(p,r));await db.mealPlans.update(id,{logged:1});await sync();sh.close();toast(missing.length?`Logged. Pantry was short on ${missing[0].name}`:'Logged. Pantry updated');render()}
@@ -118,7 +153,7 @@ async function mealSheet(id){
       if(!name||!text)return er.textContent='Name and ingredients can’t be empty.';
       busy(b,1,'Saving…');
       const serves=Math.max(1,Math.round(+sh.q('#sr').value)||1),portions=Math.max(.25,+sh.q('#pp').value||1);
-      try{const ch={name,servings:serves};if(text!==r.text){ch.text=text;ch.ingredients=await parseIngredients(text)}
+      try{const ch={name,servings:serves,steps:splitSteps(sh.q('#stx').value)};if(text!==r.text){ch.text=text;ch.ingredients=await parseIngredients(text)}
         await db.recipes.update(r.id,ch);await db.mealPlans.update(id,{portions});await sync();sh.close();toast('Saved');render()}
       catch(x){er.textContent=x.message;busy(b,0,'Save changes')}}};
 }
@@ -131,7 +166,7 @@ async function renderPantry(){
     if('new'in b.dataset)itemSheet();else if(b.dataset.i)itemSheet(await db.pantryItems.get(+b.dataset.i))};
 }
 function itemSheet(it){
-  const sh=sheet(`<h3>${it?'Edit item':'Add to pantry'}</h3><input id="nm" placeholder="Name" value="${it?esc(it.name):''}"><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount" value="${it?q1(it.qty):''}"><input id="u" value="${it?it.unit:'g'}" list="us"><datalist id="us"><option>g<option>ml<option>pcs<option>tsp<option>tbsp<option>cup</datalist></div><div class="err" id="er"></div><button id="sv" style="width:100%">${it?'Save':'Add item'}</button>${it?'<button class="r" id="rm" style="width:100%;margin-top:.4rem">Remove</button>':''}`);
+  const sh=sheet(`<h3>${it?'Edit item':'Add to pantry'}</h3><input id="nm" placeholder="Name" value="${it?esc(it.name):''}"><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount" value="${it?q1(it.qty):''}">${unitSel('u',it?it.unit:'g')}</div><div class="err" id="er"></div><button id="sv" style="width:100%">${it?'Save':'Add item'}</button>${it?'<button class="r" id="rm" style="width:100%;margin-top:.4rem">Remove</button>':''}`);
   sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
     if(b.id==='rm'){await db.pantryItems.delete(it.id);await sync();sh.close();render()}
     if(b.id==='sv'){const name=sh.q('#nm').value.trim(),qty=+sh.q('#q').value,unit=sh.q('#u').value;
@@ -141,16 +176,20 @@ function itemSheet(it){
 }
 const amt=i=>['g','ml','pcs'].includes(i.unit)?sizeText(i.qty,i.unit):`${q1(i.qty)} ${i.unit}`;
 const saveSet=(key,value)=>db.appSettings.put({key,value});
-async function loadPrefs(){await loadProfiles();const [p,s]=await Promise.all([db.appSettings.get('packs'),db.appSettings.get('staples')]);setPrefs({packs:p?.value||{},staples:s?.value||[]})}
+async function loadPrefs(){await loadProfiles();await loadCorrections();const [p,s]=await Promise.all([db.appSettings.get('packs'),db.appSettings.get('staples')]);setPrefs({packs:p?.value||{},staples:s?.value||[]})}
 function packSheet(name){
   const p=name?pkgFor({name,unit:'g'}):null;
-  const sh=sheet(`<h3>${name?esc(name):'Pack size'}</h3>${name?'':'<input id="pn" placeholder="Item name">'}<div class="f"><input id="pl" placeholder="Pack name, e.g. bag" value="${esc(p?.n||'pack')}" list="pls"><datalist id="pls"><option>bag<option>pack<option>packet<option>bottle<option>jar<option>carton<option>tub<option>can<option>box<option>bunch<option>tray</datalist></div><div class="f"><input id="ps" type="number" inputmode="decimal" placeholder="Size" value="${p?.size||''}"><input id="pu" value="${p?.unit||'g'}" list="pus"><datalist id="pus"><option>g<option>ml<option>pcs</datalist></div><div class="err" id="er"></div><button id="sv" style="width:100%">Save</button>${p?.custom?'<button class="r" id="rs" style="width:100%;margin-top:.4rem">Reset to default</button>':''}`);
+  const big=p&&p.size>=1000&&p.size%1000===0&&(p.unit==='g'||p.unit==='ml');
+  const pv=!p?{size:'',unit:'g'}:big?{size:p.size/1000,unit:p.unit==='g'?'kg':'l'}:{size:p.size,unit:p.unit};
+  const names=['bag','pack','packet','bottle','jar','carton','tub','can','box','bunch','tray','block'];if(p&&!names.includes(p.n))names.unshift(p.n);
+  const sh=sheet(`<h3>${name?esc(name):'Pack size'}</h3>${name?'':'<input id="pn" placeholder="Item name">'}<div class="f"><select id="pl" aria-label="Pack type">${names.map(n=>`<option value="${esc(n)}"${n===(p?.n||'pack')?' selected':''}>${esc(n)}</option>`).join('')}</select></div><div class="f"><input id="ps" type="number" inputmode="decimal" placeholder="Size" value="${pv.size}">${unitSel('pu',pv.unit,'',['g','kg','ml','l','pcs'])}</div><div class="err" id="er"></div><button id="sv" style="width:100%">Save</button>${p?.custom?'<button class="r" id="rs" style="width:100%;margin-top:.4rem">Reset to default</button>':''}`);
   sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
     const k=(name||sh.q('#pn')?.value||'').trim().toLowerCase(),cur=(await db.appSettings.get('packs'))?.value||{};
     if(b.id==='rs')delete cur[k];
-    else if(b.id==='sv'){const size=+sh.q('#ps').value,unit=sh.q('#pu').value.trim(),n=sh.q('#pl').value.trim()||'pack';
-      if(!k||!(size>0)||!['g','ml','pcs'].includes(unit))return sh.q('#er').textContent='Enter an item, a size, and unit g, ml or pcs.';
-      cur[k]={n,size,unit}}
+    else if(b.id==='sv'){let size=+sh.q('#ps').value,unit=sh.q('#pu').value;const n=sh.q('#pl').value||'pack';
+      if(!k||!(size>0))return sh.q('#er').textContent='Enter an item and a size greater than 0.';
+      if(unit==='kg'){size*=1000;unit='g'}else if(unit==='l'){size*=1000;unit='ml'}
+      cur[k]={n,size:Math.round(size*100)/100,unit}}
     else return;
     await saveSet('packs',cur);await loadPrefs();await sync();sh.close();toast('Saved');render();
   };
@@ -238,7 +277,7 @@ async function renderGrocery(){
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
     if(d.buy||d.x){const row=$(`[data-row="${d.buy||d.x}"]`);if(d.buy){b.classList.add('on');b.textContent='✓';await new Promise(r=>setTimeout(r,250));await restockFromGrocery(+d.buy);toast('Moved to pantry')}else await db.groceryList.delete(+d.x);
       row.classList.add('gone');setTimeout(render,300)}
-    if('new'in d){const sh=sheet(`<h3>Add to list</h3><input id="nm" placeholder="Name"><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount"><input id="u" value="g" list="us"><datalist id="us"><option>g<option>ml<option>pcs<option>tsp<option>tbsp<option>cup</datalist></div><div class="err" id="er"></div><button id="sv" style="width:100%">Add to list</button>`);
+    if('new'in d){const sh=sheet(`<h3>Add to list</h3><input id="nm" placeholder="Name"><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount">${unitSel('u','g')}</div><div class="err" id="er"></div><button id="sv" style="width:100%">Add to list</button>`);
       sh.el.onclick=async ev=>{if(ev.target.id!=='sv')return;const name=sh.q('#nm').value.trim(),qty=+sh.q('#q').value,unit=sh.q('#u').value;
         if(!name||!(qty>0)||!UNITS.includes(unit))return sh.q('#er').textContent='Enter a name, an amount, and unit g, ml, pcs, tsp, tbsp or cup.';
         await db.groceryList.add({name,qty,unit,checked:0});sh.close();render()}}};
@@ -252,7 +291,7 @@ $('#n').onclick=e=>{const t=e.target.closest('button')?.dataset.t;if(t&&t!==tab)
 (async()=>{
   await requestPersistence();await autoRestore();await loadPrefs();await maybeWelcome();
   setOnBackup(async snap=>{if(cloud.isReady())await cloud.push(snap)});
-  await render();
+  await render();timers.resume();drawTimers();
   // Cloud: sign in this device, then upload unsynced edits or take a newer copy from another device.
   cloud.init().then(async ok=>{if(!ok)return;
     const r=await cloud.pullIfNewer(importUserData);

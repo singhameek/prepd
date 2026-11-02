@@ -5,7 +5,8 @@ let sb=null,userId=null,ready=null,lastError='';
 export const getError=()=>lastError;
 export const isReady=()=>!!userId;
 export const supportId=()=>userId?userId.slice(0,8):'';
-const keyOf=n=>String(n||'').toLowerCase().replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim();
+// Same key for spelling variants ("aloo gobhi" = "aloo gobi") so shared recipes are found either way.
+const keyOf=n=>String(n||'').toLowerCase().replace(/[^a-z0-9 ]+/g,' ').replace(/\s+/g,' ').trim().split(' ').map(w=>w.replace(/([bdgkjp])h/g,'$1').replace(/oo/g,'u').replace(/ee/g,'i').replace(/aa/g,'a').replace(/(.)\1+/g,'$1')).join(' ');
 // Turns common Supabase setup mistakes into plain-language hints.
 const hint=e=>{const m=String(e?.message||e||'');
   if(/anonymous/i.test(m)&&/disabled|not enabled|allowed/i.test(m))return 'Anonymous sign-ins are switched off. In Supabase: Authentication → Sign In / Providers → turn on “Allow anonymous sign-ins”.';
@@ -65,16 +66,31 @@ export async function redeem(code,importFn){
   return true;
 }
 // ---- shared knowledge (anonymous)
-export async function shareRecipe(name,ingredients,servings,sourceUrl){
+export async function shareRecipe(name,ingredients,servings,sourceUrl,steps=[]){
   if(!userId||!name||ingredients.length<2||ingredients.length>60)return;
   const slim=ingredients.map(i=>({name:i.name,qty:i.qty,unit:i.unit,macros:i.macros,taste:!!i.taste,d:i.d??null,pc:i.pc??null}));
-  await sb.from('recipes_public').insert({name:name.slice(0,80),name_key:keyOf(name),ingredients:slim,servings:servings||1,source_url:sourceUrl||null});
+  const row={name:name.slice(0,80),name_key:keyOf(name),ingredients:slim,servings:servings||1,source_url:sourceUrl||null};
+  const r=await sb.from('recipes_public').insert({...row,steps:(steps||[]).slice(0,60)});
+  if(r.error)await sb.from('recipes_public').insert(row); // older database without the steps column
 }
 export async function findCommunity(name){
   if(!userId)return null;
-  const {data}=await sb.from('recipes_public').select('name,ingredients,servings').eq('name_key',keyOf(name)).order('created_at',{ascending:false}).limit(5);
-  const r=(data||[]).find(x=>Array.isArray(x.ingredients)&&x.ingredients.length>=3);
-  return r?{title:r.name,yield:r.servings||1,items:r.ingredients.map(i=>({...i,staple:false,display:`${i.qty} ${i.unit} ${i.name}`}))}:null;
+  let q=await sb.from('recipes_public').select('name,ingredients,servings,steps').eq('name_key',keyOf(name)).order('created_at',{ascending:false}).limit(5);
+  if(q.error)q=await sb.from('recipes_public').select('name,ingredients,servings').eq('name_key',keyOf(name)).order('created_at',{ascending:false}).limit(5);
+  const r=(q.data||[]).find(x=>Array.isArray(x.ingredients)&&x.ingredients.length>=3);
+  return r?{title:r.name,yield:r.servings||1,steps:Array.isArray(r.steps)?r.steps:[],items:r.ingredients.map(i=>({...i,staple:false,display:`${i.qty} ${i.unit} ${i.name}`}))}:null;
+}
+// ---- shared learning from user corrections (a fix is only used once 2+ devices agree)
+export async function contributeCorrection(line,result){
+  if(!userId)return;
+  try{await sb.rpc('contribute_correction',{p_line:line,p_result:result})}catch{}
+}
+export async function getCorrections(keys){
+  if(!userId||!keys.length)return {};
+  const {data,error}=await sb.from('parse_corrections').select('line_key,result,n').in('line_key',keys.slice(0,60)).gte('n',2).order('n',{ascending:false});
+  if(error)return {};
+  const out={};for(const r of data||[])if(!out[r.line_key])out[r.line_key]=r.result;
+  return out;
 }
 export async function getProfile(key){
   if(!userId)return null;
