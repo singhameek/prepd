@@ -20,6 +20,8 @@ const gp=(u,n)=>{
 };
 const baseUnit=u=>u==='pcs'?'pcs':MASS[u]?'g':'ml';
 export const toGrams=(q,u,n)=>q*gp(u,n);
+// Converts an amount between any two units for one ingredient (e.g. 4900 g -> 4.9 kg).
+export const convertAmount=(q,from,to,n)=>from===to?q:q*gp(from,n)/gp(to,n);
 // Name matching: ignores case, plurals and common synonyms so "Onions" = "onion" and "curd" = "yogurt".
 const SYN=[[/^(whole )?wheat flour$|^atta$|^chapati flour$/,'atta'],[/^(curd|dahi|yogh?urt|plain yogh?urt)$/,'curd'],[/^(coriander leaves?|cilantro|dhania)$/,'cilantro'],
  [/^(capsicum|bell peppers?)$/,'bell pepper'],[/^(green )?chil+(i|ies|y|is|es)?$|^green chil+(i|ies|y|is|es)?$/,'green chili'],[/^(jeera|cumin|cumin seeds?)$/,'cumin'],

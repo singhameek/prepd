@@ -1,6 +1,6 @@
 /*!
  * ============================================================================
- *  IngredientEngine v1.0.0
+ *  IngredientEngine v1.1.0
  *  A single-file, zero-dependency, fully offline fuzzy recipe-ingredient parser.
  * ============================================================================
  *
@@ -32,9 +32,11 @@
  *  GUARANTEES
  *  ----------
  *    * Zero dependencies, no network, no model, no eval.
- *    * 0.013 ms / line measured over the embedded 90-line corpus
- *      (78k lines/sec), ~13 MB JS heap, 116 KB of serialised data matrix.
+ *    * 0.015 ms / line measured over the embedded 90-line corpus
+ *      (~68k lines/sec), ~12 MB JS heap, 124 KB of serialised data matrix.
  *    * Fully deterministic: the same string always yields the same object.
+ *      The correction store uses a monotonic sequence counter - no clocks,
+ *      no randomness, no timers.
  *    * One ESM file. Browsers (`<script type="module">`), Deno, Bun, and
  *      Node >= 20.19 (which auto-detects ESM syntax in .js) all run it
  *      unchanged; on older Node rename it to `.mjs`.
@@ -64,6 +66,29 @@
  *    runSelfTests()                  -> { passed, failed, results, accuracy }
  *    benchmark(n)                    -> timing + memory report
  *
+ *  NEW IN 1.1
+ *  ----------
+ *    parseRecipeSteps(text, { ingredients }) -> { steps, warnings }
+ *        numbered / bulleted / line-per-line / paragraph methods, with
+ *        durations, oven temperature and the ingredients each step mentions
+ *    detectDurations(stepText)       -> [{ seconds, label, kind, approximate, rangeText? }]
+ *    splitStepsText(text)            -> cleaned step strings
+ *    createCorrectionStore(initial?) -> deterministic, bounded self-learning store
+ *        recordCorrection / applyLearned / export / import / stats; learns at
+ *        three levels: exact line, ingredient alias, and grams-per-piece /
+ *        grams-per-ml. A correction wins after 2 agreeing records, or after 1
+ *        record from the store's own user (options.userId).
+ *    parseIngredients(text, { corrections }) -> learned fixes applied and marked
+ *        with learned: true and a raised confidence
+ *    every rich item now also carries displayQty / displayUnit: the amount and
+ *        unit the line itself used ("cup", "tbsp", "g", "ml", "clove", "pcs")
+ *
+ *  DATA COVERAGE
+ *  -------------
+ *    269 canonical ingredients including South Asian staples (atta, besan,
+ *    maida, rava, ghee, paneer, curd, toor/moong/masoor/chana/urad dal, hing,
+ *    amchur, chaat masala, curry leaves, kasuri methi, poha, jaggery).
+ *
  *  STRICT OUTPUT SCHEMA
  *  --------------------
  *    {"i":[["name", qty, "unit", kcal, protein, carbs, fat, always]]}
@@ -91,7 +116,7 @@
  * ============================================================================
  */
 
-export const VERSION = "1.0.0";
+export const VERSION = "1.1.0";
 
 /* ==========================================================================
  * SECTION 1 - DATA MATRIX (fully embedded, immutable)
@@ -258,7 +283,7 @@ function I(id, name, category, aliases, density, nutrition, extra) {
 }
 
 /* --------------------------------------------------------------------------
- * 250 canonical ingredients. Densities are measured cup weights (King Arthur /
+ * 269 canonical ingredients. Densities are measured cup weights (King Arthur /
  * USDA SR) divided by 240 ml; macros are rounded USDA figures. This engine is
  * for shopping lists and UI, not clinical nutrition.
  * ------------------------------------------------------------------------ */
@@ -407,7 +432,7 @@ const INGREDIENTS = Object.freeze([
   I("pasta", "Pasta", "granular", ["pasta", "spaghetti", "penne", "fusilli", "macaroni", "noodles"], 0.5, [371, 13, 75, 1.5], { container: "bag", containerSize: 500 }),
   I("oats", "Oats", "granular", ["oats", "rolled oats", "porridge oats", "oatmeal"], 0.375, [389, 17, 66, 7], { container: "bag", containerSize: 1000 }),
   I("breadcrumbs", "Breadcrumbs", "granular", ["breadcrumbs", "bread crumbs", "panko"], 0.467, [395, 13, 72, 5], { container: "bag", containerSize: 250 }),
-  I("semolina", "Semolina", "granular", ["semolina", "semolina flour", "durum wheat"], 0.7, [360, 12.7, 73, 1.1], { container: "bag", containerSize: 500 }),
+  I("semolina", "Semolina", "granular", ["semolina", "semolina flour", "durum wheat", "rava", "sooji", "suji", "rava sooji", "upma rava"], 0.7, [360, 12.7, 73, 1.1], { container: "bag", containerSize: 500 }),
   I("cornmeal", "Cornmeal", "granular", ["cornmeal", "polenta", "yellow cornmeal"], 0.6, [370, 8, 79, 1.8], { container: "bag", containerSize: 500 }),
   I("sesame_seeds", "Sesame Seeds", "nut", ["sesame seeds", "sesame seed"], 0.6, [573, 18, 23, 50], { container: "jar", containerSize: 100 }),
   I("chia_seeds", "Chia Seeds", "nut", ["chia seeds", "chia"], 0.6, [486, 17, 42, 31], { container: "bag", containerSize: 250 }),
@@ -426,10 +451,10 @@ const INGREDIENTS = Object.freeze([
   I("hazelnuts", "Hazelnuts", "nut", ["hazelnuts", "hazelnut", "filberts"], 0.6, [628, 15, 17, 61], { container: "bag", containerSize: 200 }),
 
   /* ---------------- Spices (also used by the generic "spices" fallback) ---------------- */
-  I("cumin", "Cumin", "spice", ["cumin", "ground cumin", "cumin seeds"], 0.42, [375, 18, 44, 22], { container: "jar", containerSize: 50 }),
+  I("cumin", "Cumin", "spice", ["cumin", "ground cumin", "cumin seeds", "jeera", "jeera powder", "safed jeera", "shahi jeera"], 0.42, [375, 18, 44, 22], { container: "jar", containerSize: 50 }),
   I("paprika", "Paprika", "spice", ["paprika", "smoked paprika", "sweet paprika"], 0.4, [282, 14, 54, 13], { container: "jar", containerSize: 50 }),
   I("cinnamon", "Cinnamon", "spice", ["cinnamon", "ground cinnamon", "cinnamon stick"], 0.52, [247, 4, 81, 1.2], { container: "jar", containerSize: 50 }),
-  I("turmeric", "Turmeric", "spice", ["turmeric", "ground turmeric"], 0.45, [312, 9.7, 67, 3.3], { container: "jar", containerSize: 50 }),
+  I("turmeric", "Turmeric", "spice", ["turmeric", "ground turmeric", "haldi", "haldi powder"], 0.45, [312, 9.7, 67, 3.3], { container: "jar", containerSize: 50 }),
   I("chili_flakes", "Chili Flakes", "spice", ["chili flakes", "chilli flakes", "red pepper flakes", "crushed red pepper"], 0.36, [318, 12, 57, 17], { container: "jar", containerSize: 50 }),
   I("coriander", "Ground Coriander", "spice", ["ground coriander", "coriander powder", "coriander seeds"], 0.4, [298, 12, 55, 18], { container: "jar", containerSize: 50 }),
   I("curry_powder", "Curry Powder", "spice", ["curry powder", "garam masala"], 0.42, [325, 14, 56, 14], { container: "jar", containerSize: 50 }),
@@ -529,7 +554,27 @@ const INGREDIENTS = Object.freeze([
   I("phyllo", "Phyllo Pastry", "dense", ["phyllo dough", "phyllo pastry", "filo dough", "fillo pastry"], 0.4, [400, 8, 60, 14], { counts: { sheet: 20 }, container: "pack", containerSize: 270 }),
   I("coffee", "Coffee", "liquid", ["coffee", "espresso", "strong coffee", "brewed coffee"], 1, [2, 0.1, 0, 0], { container: "pack", containerSize: 250 }),
   I("pickle_juice", "Pickle Juice", "liquid", ["pickle juice", "gherkin juice"], 1, [20, 0.5, 3, 0.2], { container: "jar", containerSize: 500 }),
-  I("christmas_pudding", "Christmas Pudding", "dense", ["christmas pudding", "plum pudding"], 1, [330, 3.5, 60, 9], { piece: 454, counts: { slice: 80 }, container: "pack", containerSize: 454 })
+  I("christmas_pudding", "Christmas Pudding", "dense", ["christmas pudding", "plum pudding"], 1, [330, 3.5, 60, 9], { piece: 454, counts: { slice: 80 }, container: "pack", containerSize: 454 }),
+  /* ---------------- South Asian staples ---------------- */
+  I("atta", "Atta (Whole Wheat Flour)", "granular", ["atta", "whole wheat flour", "wholemeal flour", "chakki atta", "gehun atta", "aata", "wheat atta"], 0.5, [340, 13.2, 72, 2.5], { container: "bag", containerSize: 1000 }),
+  I("besan", "Besan (Gram Flour)", "granular", ["besan", "gram flour", "chickpea flour", "chana flour", "bengal gram flour"], 0.38, [387, 22, 58, 6.7], { container: "bag", containerSize: 500 }),
+  I("maida", "Maida (Refined Flour)", "granular", ["maida", "maida flour", "refined flour", "bakery flour"], 0.52, [364, 10, 76, 1], { container: "bag", containerSize: 1000 }),
+  I("ghee", "Ghee", "fat", ["ghee", "clarified butter", "desi ghee", "pure ghee"], 0.91, [900, 0, 0, 100], { container: "jar", containerSize: 500 }),
+  I("paneer", "Paneer", "dense", ["paneer", "panir", "indian cottage cheese"], 1, [265, 18.3, 1.2, 20.8], { piece: 20, container: "pack", containerSize: 200 }),
+  I("curd", "Curd (Dahi)", "liquid", ["curd", "dahi", "indian yogurt", "indian curd", "fresh curd"], 1.03, [61, 3.5, 4.7, 3.3], { container: "tub", containerSize: 400 }),
+  I("toor_dal", "Toor Dal", "dense", ["toor dal", "tur dal", "arhar dal", "toovar dal", "split pigeon peas", "pigeon peas"], 0.83, [343, 22, 63, 1.5], { container: "bag", containerSize: 500 }),
+  I("moong_dal", "Moong Dal", "dense", ["moong dal", "mung dal", "moong beans", "mung beans", "green gram", "green gram dal"], 0.86, [347, 24, 63, 1.2], { container: "bag", containerSize: 500 }),
+  I("masoor_dal", "Masoor Dal", "dense", ["masoor dal", "masoor", "pink lentils", "split red lentils"], 0.8, [352, 25, 63, 1.1], { container: "bag", containerSize: 500 }),
+  I("chana_dal", "Chana Dal", "dense", ["chana dal", "channa dal", "bengal gram", "split chickpeas", "split bengal gram"], 0.83, [360, 20, 60, 5], { container: "bag", containerSize: 500 }),
+  I("urad_dal", "Urad Dal", "dense", ["urad dal", "urad", "udad dal", "black gram", "white urad dal", "split black gram"], 0.82, [341, 25, 59, 1.4], { container: "bag", containerSize: 500 }),
+  I("hing", "Hing (Asafoetida)", "spice", ["hing", "asafoetida", "asafetida", "heeng"], 0.5, [297, 4, 68, 1], { container: "jar", containerSize: 50 }),
+  I("amchur", "Amchur (Mango Powder)", "spice", ["amchur", "aamchur", "amchoor", "dried mango powder", "mango powder"], 0.5, [320, 3, 78, 1], { container: "jar", containerSize: 50 }),
+  I("chaat_masala", "Chaat Masala", "spice", ["chaat masala", "chat masala", "chat masala powder"], 0.5, [250, 8, 50, 5], { container: "jar", containerSize: 50 }),
+  I("curry_leaves", "Curry Leaves", "herb", ["curry leaves", "curry leaf", "kadi patta", "meetha neem", "sweet neem leaves"], 0.1, [108, 6.1, 18.7, 1], { counts: { leaf: 0.2, sprig: 2 }, container: "bunch", containerSize: 30 }),
+  I("kasuri_methi", "Kasuri Methi", "spice", ["kasuri methi", "kasoori methi", "dried fenugreek leaves", "sukhi methi"], 0.25, [323, 23, 58, 6.4], { container: "jar", containerSize: 50 }),
+  I("poha", "Poha (Flattened Rice)", "granular", ["poha", "flattened rice", "beaten rice", "chivda", "aval"], 0.3, [350, 7, 77, 1], { container: "bag", containerSize: 500 }),
+  I("jaggery", "Jaggery", "granular", ["jaggery", "gur", "jaggery powder", "gud", "organic jaggery"], 0.83, [383, 0.4, 98, 0.1], { piece: 20, container: "jar", containerSize: 500 }),
+  I("green_chili", "Green Chili", "produce", ["green chili", "green chilli", "green chilies", "green chillies", "hari mirch", "thai green chili", "green chili pepper"], 0.7, [40, 2, 9, 0.2], { piece: 5 })
 ]);
 
 /* --------------------------------------------------------------------------
@@ -693,11 +738,18 @@ function withinOneEdit(a, b) {
 function fuzzyAlias(word) {
   if (!word || word.length < 5 || word.includes(" ")) return null;
   if (FUZZY_CACHE.has(word)) return FUZZY_CACHE.get(word);
+  // Correct the singular form: otherwise "beans" is one insertion away from
+  // the auto-plural "besans", and a real word becomes a loanword.
+  const probe = word.endsWith("s") ? singularize(word) : word;
+  if (probe.length < 5) {
+    FUZZY_CACHE.set(word, null);
+    return null;
+  }
   if (!FUZZY_ALIASES) FUZZY_ALIASES = [...ALIAS_TO_INGREDIENT.keys()].filter((alias) => alias.length >= 5 && !alias.includes(" "));
   let hit = null;
   for (const alias of FUZZY_ALIASES) {
-    if (Math.abs(alias.length - word.length) > 1) continue;
-    if (withinOneEdit(word, alias)) {
+    if (Math.abs(alias.length - probe.length) > 1) continue;
+    if (withinOneEdit(probe, alias)) {
       hit = ALIAS_TO_INGREDIENT.get(alias);
       break;
     }
@@ -1443,6 +1495,22 @@ function unitWord(unit, quantity) {
   return quantity != null && quantity > 1 ? words[1] : words[0];
 }
 
+/**
+ * The unit the line itself used, for UI display: "cup", "tsp", "tbsp", "g",
+ * "ml", a measure word such as "clove", the package word for "2 x 400 g cans",
+ * or "pcs" when the line just counted items.
+ */
+function displayUnits(ctx) {
+  const { node, multiplier, unit, measure, packageWord, directive } = ctx;
+  const count = node && node.value != null ? node.value : null;
+  if (directive) return { displayQty: 1, displayUnit: "pinch" };
+  if (packageWord) return { displayQty: multiplier != null ? multiplier : count == null ? 1 : count, displayUnit: packageWord };
+  if (unit) return { displayQty: count == null ? 1 : count, displayUnit: unit.id };
+  if (measure) return { displayQty: count == null ? 1 : count, displayUnit: measure.id };
+  if (count != null) return { displayQty: count, displayUnit: "pcs" };
+  return { displayQty: 1, displayUnit: "pcs" };
+}
+
 /** Human-readable source amount ("3 cloves", "a splash", "2 1/2 cups"). */
 function buildDisplayAmount(ctx) {
   const { quantity, node, unit, measure, name, directive } = ctx;
@@ -1462,7 +1530,7 @@ function buildDisplayAmount(ctx) {
 
 /** Build one rich output item. */
 function buildItem(ctx) {
-  const { input, component, node, multiplier, unit, packageSize, extraAmount, directive, vagueQuantity, citrus, instructionPrep } = ctx;
+  const { input, component, node, multiplier, unit, packageSize, extraAmount, directive, vagueQuantity, citrus, instructionPrep, packageWord } = ctx;
   let measure = ctx.measure;
 
   // "3 large garlic cloves" / "2 chicken breasts": a trailing count noun is the
@@ -1474,8 +1542,12 @@ function buildItem(ctx) {
       const last = words[words.length - 1].replace(/[^a-z]/gi, "");
       const trailing = EXACT_MEASURE_ALIAS.get(last) || EXACT_MEASURE_ALIAS.get(singularize(last));
       if (trailing && trailing.id !== "piece") {
+        const shortened = words.slice(0, -1).join(" ");
+        // "curry leaves" is an ingredient of its own; "garlic cloves" is not,
+        // so the count noun stays the measure and the head word is the item.
+        const keepWhole = Boolean(resolveIngredientIn(component).ingredient) && !resolveIngredientIn(shortened).ingredient;
         measure = trailing;
-        componentText = words.slice(0, -1).join(" ");
+        if (!keepWhole) componentText = shortened;
       }
     }
   }
@@ -1560,6 +1632,7 @@ function buildItem(ctx) {
     always: Boolean(directive || vagueQuantity),
     metric: `${formatQuantity(amount.quantity)} ${amount.unit}`,
     displayAmount: buildDisplayAmount({ quantity, node, unit, measure, name, directive }),
+    ...displayUnits({ node, multiplier, unit, measure, packageWord, directive }),
     uiFraction: ui.label,
     container: { name: ui.container, size: ui.size, unit: ui.unit, ratio: ui.ratio, fraction: ui.fraction },
     range,
@@ -1692,9 +1765,11 @@ export function analyze(input, options = {}) {
   text = text.replace(/^of\s+/, "");
 
   // "400 g can chickpeas": the package word follows a concrete mass unit.
+  let packageWord = null;
   if (unit) {
     const pkg = /^(cans?|tins?|jars?|packets?|packs?|sachets?|bottles?|cartons?|boxes?|bags?|tubs?|blocks?|punnets?|loaves?)\b\s*/.exec(text);
     if (pkg) {
+      packageWord = singularize(pkg[1]);
       text = text.slice(pkg[0].length).trim().replace(/^of\s+/, "");
     }
   }
@@ -1706,7 +1781,7 @@ export function analyze(input, options = {}) {
 
   const prepNotes = [...directivePhrases, ...preparation];
   return components.map((component) =>
-    buildItem({ input: raw, component, node, multiplier, unit, measure, packageSize, extraAmount, directive, vagueQuantity, citrus, instructionPrep: prepNotes })
+    buildItem({ input: raw, component, node, multiplier, unit, measure, packageSize, extraAmount, directive, vagueQuantity, citrus, instructionPrep: prepNotes, packageWord })
   );
 }
 
@@ -1721,8 +1796,12 @@ export function analyze(input, options = {}) {
 export function parseIngredients(input, options = {}) {
   const text = String(input == null ? "" : input);
   const lines = text.split(/\r?\n|;/).map((line) => line.trim()).filter(Boolean);
+  const store = options && options.corrections && typeof options.corrections.applyLearned === "function" ? options.corrections : null;
   const items = [];
-  for (const line of lines) items.push(...analyze(line, options));
+  for (const line of lines) {
+    const parsed = analyze(line, options);
+    items.push(...(store ? store.applyLearned(line, parsed) : parsed));
+  }
   return items;
 }
 
@@ -1787,9 +1866,1365 @@ const IngredientEngine = Object.freeze({
   formatQuantity,
   getTaxonomy,
   getIngredient,
+  parseRecipeSteps,
+  detectDurations,
+  splitStepsText,
+  createCorrectionStore,
   runSelfTests,
   benchmark,
 });
+
+/* ==========================================================================
+ * SECTION 8b - RECIPE STEPS (method text -> structured steps)
+ * ========================================================================== */
+
+/** Numeric step markers: "1.", "1)", "(1)", "Step 3:" and bullet glyphs. */
+const STEP_MARKER_RE = /^(?:step\s*\d+\s*[:.)\-–—]?|\d{1,2}\s*[.)]|[-•*–—])\s*/i;
+
+/** Headings that introduce a method block rather than a step. */
+const STEP_HEADING_RE = /^(?:method|instructions?|directions?|steps?|preparation|how to (?:make|cook|bake|prepare).*)\s*:?$/i;
+
+const HTML_ENTITIES = Object.freeze({
+  "&nbsp;": " ", "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"',
+  "&#39;": "'", "&apos;": "'", "&rsquo;": "'", "&lsquo;": "'",
+  "&ldquo;": '"', "&rdquo;": '"', "&deg;": "°", "&frac12;": "1/2",
+  "&frac14;": "1/4", "&frac34;": "3/4",
+});
+
+/** Remove markup, entities and stray whitespace from method text. */
+function stripStepMarkup(text) {
+  return String(text == null ? "" : text)
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|li|div|h[1-6]|tr)>/gi, "\n")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&[a-z#0-9]+;/gi, (entity) => HTML_ENTITIES[entity.toLowerCase()] || " ")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/[\u2013\u2014]/g, "-")
+    .replace(/[ \t\f\v\u00a0]+/g, " ");
+}
+
+/** Strip a leading list marker from one step and collapse its whitespace. */
+function cleanStepText(text) {
+  return String(text || "")
+    .replace(STEP_MARKER_RE, "")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,.;:!?])/g, "$1")
+    .trim();
+}
+
+/** Split a paragraph into sentences without regex lookbehind (older Safari). */
+function splitSentences(paragraph) {
+  const sentences = [];
+  const re = /[^.!?]+(?:[.!?]+["']?|$)/g;
+  let match;
+  while ((match = re.exec(paragraph)) !== null) {
+    const text = match[0].trim();
+    if (!text) continue;
+    // A lowercase fragment continues the previous sentence; a short trailing
+    // scrap ("Season well.") is still its own step.
+    if (sentences.length && /^[a-z]/.test(text)) sentences[sentences.length - 1] += " " + text;
+    else sentences.push(text);
+  }
+  return sentences;
+}
+
+/**
+ * Split a recipe method into cleaned step strings.
+ *
+ * Handles numbered ("1.", "1)", "(1)", "Step 1:"), bulleted, one-step-per-line
+ * and single-paragraph methods, stripping HTML, list markers and double spaces.
+ * Returns string[] in reading order (indices are added by parseRecipeSteps).
+ *
+ *   splitStepsText("1. Boil water.\n2. Add pasta.")
+ *   -> ["Boil water.", "Add pasta."]
+ */
+export function splitStepsText(text) {
+  const source = stripStepMarkup(text);
+  if (!source.trim()) return [];
+
+  const lines = source.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return [];
+
+  // Drop a leading "Method" / "Instructions" heading.
+  if (STEP_HEADING_RE.test(lines[0])) lines.shift();
+  if (!lines.length) return [];
+
+  const hasMarkers = lines.some((line) => STEP_MARKER_RE.test(line));
+  let blocks = [];
+
+  if (hasMarkers) {
+    let current = null;
+    for (const line of lines) {
+      if (STEP_MARKER_RE.test(line)) {
+        if (current !== null) blocks.push(current);
+        current = line.replace(STEP_MARKER_RE, "");
+      } else if (current !== null) {
+        current += " " + line; // wrapped continuation of the current step
+      } else if (!STEP_HEADING_RE.test(line)) {
+        blocks.push(line); // preamble before the first marker
+      }
+    }
+    if (current !== null) blocks.push(current);
+  } else {
+    for (const line of lines) {
+      const continuation = /^(?:and|then|or|but|plus|also|next|finally|meanwhile|now)\b/i.test(line);
+      if (continuation && blocks.length) blocks[blocks.length - 1] += " " + line;
+      else blocks.push(line);
+    }
+  }
+
+  // A numbered block or a paragraph can hold several sentences: each sentence
+  // is its own step ("Step 1: Mix. Rest. Then fry." -> three steps).
+  blocks = blocks.flatMap((block) => splitSentences(block));
+
+  return blocks.map(cleanStepText).filter(Boolean);
+}
+
+/* --------------------------------------------------------------------------
+ * Duration detection
+ * ------------------------------------------------------------------------ */
+
+const TIME_UNIT_SECONDS = Object.freeze({
+  s: 1, sec: 1, secs: 1, second: 1, seconds: 1,
+  m: 60, min: 60, mins: 60, minute: 60, minutes: 60,
+  h: 3600, hr: 3600, hrs: 3600, hour: 3600, hours: 3600,
+  d: 86400, day: 86400, days: 86400,
+});
+
+const DURATION_UNIT_RE = "(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)";
+const NUMBER_RE = "(\\d+(?:\\.\\d+)?)";
+
+/** Rewrite worded times into digits so one numeric grammar handles them all. */
+function normalizeTimeWords(text) {
+  let s = text.toLowerCase();
+  s = s.replace(/\ban hour and a half\b/g, "1.5 hours");
+  s = s.replace(/\bone and a half hours?\b/g, "1.5 hours");
+  s = s.replace(/\bhalf an hour\b/g, "0.5 hour");
+  s = s.replace(/\bhalf a minute\b/g, "0.5 minute");
+  s = s.replace(/\bhalf a day\b/g, "12 hours");
+  s = s.replace(/\ban hour\b/g, "1 hour");
+  s = s.replace(/\ba minute\b/g, "1 minute");
+  s = s.replace(/\ba second\b/g, "1 second");
+  s = s.replace(/\ba day\b/g, "1 day");
+  s = s.replace(/\ba couple of (hours?|minutes?|seconds?|days?)\b/g, "2 $1");
+  s = s.replace(/\ba few (hours?|minutes?|seconds?|days?)\b/g, "3 $1");
+  s = s.replace(/\bseveral (hours?|minutes?|seconds?|days?)\b/g, "3 $1");
+  s = s.replace(/\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(hours?|minutes?|seconds?|days?)\b/g,
+    (whole, word, unit) => `${NUM_WORDS[word] || 1} ${unit}`);
+  return s;
+}
+
+/** Classify what a duration is waiting for, from the verbs in front of it. */
+function durationKind(text, index) {
+  const before = text.slice(Math.max(0, index - 70), index);
+  const patterns = [
+    [/\bmarinat(?:e|ed|ing)\b/g, "marinate"],
+    [/\b(?:proo?f(?:ing)?|prove|rising|rise|double in size)\b/g, "proof"],
+    [/\b(?:soak|soaking|steep|steeping)\b/g, "soak"],
+    [/\b(?:chill|chilling|refrigerat\w*|freeze|freezing|fridge|cool|cooling)\b/g, "chill"],
+    [/\b(?:rest|resting|stand|standing|settle|settling)\b/g, "rest"],
+    [/\b(?:simmer|simmering)\b/g, "simmer"],
+    [/\b(?:bake|baking|roast|roasting|oven|grill|broil)\b/g, "bake"],
+    [/\b(?:cook|cooking|boil|boiling|fry|frying|saute|sauté|steam|steaming|poach|poaching|reduce|reducing|caramelis\w*|carameliz\w*|stir|stirring|whisk|blend|knead)\b/g, "cook"],
+  ];
+  // The closest verb to the duration describes it; an earlier sentence's verb
+  // must not win ("Rest for 10 minutes. Then fry for 2 minutes.").
+  let closest = -1;
+  let kind = "other";
+  for (const [pattern, label] of patterns) {
+    pattern.lastIndex = 0;
+    let match;
+    while ((match = pattern.exec(before)) !== null) {
+      if (match.index >= closest) {
+        closest = match.index;
+        kind = label;
+      }
+    }
+  }
+  return kind;
+}
+
+/** "until golden brown" / "until tender": the reason a timer is running. */
+function durationPurpose(text, endIndex) {
+  // Only the remainder of the current sentence can explain this timer.
+  const after = text.slice(endIndex, endIndex + 80).split(/[.!?]/)[0];
+  const until = /\buntil\s+([^,.;!?]{2,40})/i.exec(after);
+  if (until) return `until ${until[1].trim()}`;
+  return null;
+}
+
+/** Phrases that describe prep metadata rather than a step timer. */
+const NON_TIMER_BEFORE_RE = /\b(?:takes?|taking|needs?|requires?|prep(?:aration)?\s*time|cook(?:ing)?\s*time|total\s+time|ready\s+in)\b/;
+const NON_TIMER_AFTER_RE = /^\s*(?:to\s+(?:prepare|prep|make|assemble|serve)\b|of\s+prep(?:aration)?\b)/i;
+
+/**
+ * Internal duration scanner. Returns { durations, warnings } so parseRecipeSteps
+ * can report phrases such as "for 3 whistles", which look like timers but are not.
+ */
+function analyzeDurations(stepText) {
+  const original = String(stepText == null ? "" : stepText);
+  const durations = [];
+  const warnings = [];
+  if (!original.trim()) return { durations, warnings };
+
+  const text = normalizeTimeWords(original);
+  const used = [];
+  const overlaps = (start, end) => used.some((span) => start < span.end && end > span.start);
+
+  const rangeRe = new RegExp(`${NUMBER_RE}\\s*(?:-|–|—|\\bto\\b|\\bor\\b)\\s*${NUMBER_RE}\\s*${DURATION_UNIT_RE}\\b`, "g");
+  let match;
+  while ((match = rangeRe.exec(text)) !== null) {
+    const start = match.index;
+    const end = match.index + match[0].length;
+    const unitSeconds = TIME_UNIT_SECONDS[match[3]];
+    if (!unitSeconds || overlaps(start, end)) continue;
+    used.push({ start, end });
+    durations.push({
+      start,
+      end,
+      seconds: Math.round(parseFloat(match[1]) * unitSeconds), // lower bound of the range
+      approximate: /\b(?:about|around|approximately|roughly|approx)\b|~/.test(text.slice(Math.max(0, start - 14), start)),
+      rangeText: match[0].replace(/\s+/g, " ").trim(),
+    });
+  }
+
+  const singleRe = new RegExp(`${NUMBER_RE}\\s*${DURATION_UNIT_RE}\\b`, "g");
+  while ((match = singleRe.exec(text)) !== null) {
+    const start = match.index;
+    let end = match.index + match[0].length;
+    if (overlaps(start, end)) continue;
+    const unitSeconds = TIME_UNIT_SECONDS[match[2]];
+    if (!unitSeconds) continue;
+
+    // "1 hour 30 minutes" -> one 5400 s duration, not two.
+    let seconds = parseFloat(match[1]) * unitSeconds;
+    let rangeText;
+    const compound = new RegExp(`^\\s*(?:and\\s+)?${NUMBER_RE}\\s*(minutes?|mins?|seconds?|secs?)\\b`).exec(text.slice(end));
+    if (compound && unitSeconds >= 60) {
+      const extraUnit = TIME_UNIT_SECONDS[compound[2]];
+      if (extraUnit && extraUnit < unitSeconds) {
+        seconds += parseFloat(compound[1]) * extraUnit;
+        end += compound[0].length;
+        rangeText = text.slice(start, end).replace(/\s+/g, " ").trim();
+      }
+    }
+
+    const before = text.slice(Math.max(0, start - 60), start);
+    const after = text.slice(end, end + 40);
+    if (NON_TIMER_BEFORE_RE.test(before) || NON_TIMER_AFTER_RE.test(after)) continue; // "takes 20 minutes to prepare"
+    if (overlaps(start, end)) continue;
+    used.push({ start, end });
+
+    durations.push({
+      start,
+      end,
+      seconds: Math.round(seconds),
+      approximate: /\b(?:about|around|approximately|roughly|approx)\b|~/.test(before),
+      rangeText,
+    });
+  }
+
+  // "overnight" is a real wait with no number attached.
+  const overnight = /\bovernight\b/i.exec(text);
+  if (overnight) {
+    durations.push({
+      start: overnight.index,
+      end: overnight.index + overnight[0].length,
+      seconds: 8 * 3600,
+      approximate: true,
+      rangeText: "overnight",
+    });
+  }
+
+  durations.sort((a, b) => a.start - b.start);
+
+  // Attach kind / label / per-side duplication in document order.
+  const finalDurations = [];
+  for (const duration of durations) {
+    const kind = duration.rangeText === "overnight"
+      ? (/\b(?:chill|refrigerat|fridge|freeze)\w*/i.test(text) ? "chill" : "rest")
+      : durationKind(text, duration.start);
+    const purpose = durationPurpose(text, duration.end);
+    const perSide = /\b(?:per|each)\s+side\b/i.test(text.slice(duration.end, duration.end + 18));
+    const baseLabel = purpose || kind;
+    const approximate = Boolean(duration.approximate);
+    const entry = { seconds: duration.seconds, approximate, kind };
+    if (duration.rangeText) entry.rangeText = duration.rangeText;
+    if (perSide) {
+      finalDurations.push({ ...entry, label: `${baseLabel} (first side)` });
+      finalDurations.push({ ...entry, label: `${baseLabel} (second side)` });
+    } else {
+      finalDurations.push({ ...entry, label: baseLabel });
+    }
+  }
+
+  // "for 3 whistles" - a number followed by a non-time noun.
+  if (finalDurations.length === 0) {
+    const notTime = /\bfor\s+(\d+|a|an|one|two|three|four|five)\s+([a-z][a-z-]{2,})\b/i.exec(original);
+    if (notTime && !TIME_UNIT_SECONDS[notTime[2].toLowerCase()]) {
+      warnings.push(`"for ${notTime[1]} ${notTime[2]}" is not a recognised time unit and was not counted as a duration`);
+    }
+  }
+
+  return { durations: finalDurations, warnings };
+}
+
+/**
+ * Extract the waiting times from one step of method text.
+ *
+ *   detectDurations("Simmer for 10-15 minutes until tender")
+ *   -> [{ seconds: 600, label: "until tender", kind: "simmer",
+ *         approximate: false, rangeText: "10-15 minutes" }]
+ *
+ * Ranges use the lower bound for `seconds` and keep the source in `rangeText`.
+ * Compound times ("1 hour 30 minutes") become a single duration. "Overnight" is
+ * 8 hours, flagged approximate. Prep metadata ("takes 20 minutes to prepare")
+ * is ignored, as are phrases without a time unit.
+ */
+export function detectDurations(stepText) {
+  return analyzeDurations(stepText).durations;
+}
+
+/** Oven temperature in one step: "200°C", "400 F", "180 degrees", gas mark. */
+function detectTemperature(text) {
+  const source = String(text || "");
+  const withLetter = /(\d{2,4})\s*(?:°|º|deg(?:rees)?\.?)?\s*(c\b|celsius\b|f\b|fahrenheit\b)/i.exec(source);
+  if (withLetter) {
+    const fahrenheit = /^f/i.test(withLetter[2]);
+    return { value: parseFloat(withLetter[1]), unit: fahrenheit ? "F" : "C" };
+  }
+  const bare = /(\d{2,4})\s*(?:°|º|degrees?\b)/i.exec(source);
+  if (bare) {
+    const value = parseFloat(bare[1]);
+    // "180 degrees" in a recipe is Celsius far more often than not.
+    return { value, unit: value >= 250 ? "F" : "C" };
+  }
+  const gas = /gas\s*mark\s*(\d)/i.exec(source);
+  if (gas) {
+    const table = { 1: 140, 2: 150, 3: 160, 4: 180, 5: 190, 6: 200, 7: 220, 8: 230, 9: 240 };
+    const value = table[Number(gas[1])];
+    if (value) return { value, unit: "C" };
+  }
+  return undefined;
+}
+
+/** Longest-match scan for canonical ingredients mentioned inside a step. */
+function collectMentionedIngredients(stepText, allowed) {
+  const words = tokenize(stepText)
+    .filter((token) => token.type === "word" || token.type === "number")
+    .map((token) => String(token.value).toLowerCase());
+  const found = [];
+  let index = 0;
+  while (index < words.length) {
+    let hit = null;
+    for (let span = Math.min(4, words.length - index); span >= 1; span--) {
+      const phrase = words.slice(index, index + span).join(" ");
+      const ingredient = ALIAS_TO_INGREDIENT.get(phrase) || (span === 1 ? ALIAS_TO_INGREDIENT.get(singularize(phrase)) : null);
+      // A longer phrase may resolve to a variant that is not in this recipe, so
+      // keep shortening rather than giving up on the word entirely.
+      if (ingredient && (!allowed || allowed.has(ingredient.name.toLowerCase()))) {
+        hit = { ingredient, span };
+        break;
+      }
+    }
+    if (!hit) {
+      index += 1;
+      continue;
+    }
+    const name = hit.ingredient.name;
+    if ((!allowed || allowed.has(name.toLowerCase())) && !found.includes(name)) found.push(name);
+    index += hit.span;
+  }
+  return found;
+}
+
+/** Build the allowed-name set from options.ingredients (lines, names or items). */
+function allowedIngredientNames(ingredients) {
+  if (!Array.isArray(ingredients) || ingredients.length === 0) return null;
+  const allowed = new Set();
+  for (const entry of ingredients) {
+    if (!entry) continue;
+    if (typeof entry === "string") {
+      let name = titleCase(entry);
+      try {
+        const parsed = analyze(entry)[0];
+        if (parsed && parsed.name) name = parsed.name;
+      } catch (_error) {
+        name = titleCase(entry);
+      }
+      allowed.add(String(name).toLowerCase());
+    } else if (typeof entry === "object" && entry.name) {
+      allowed.add(String(entry.canonicalName || entry.name).toLowerCase());
+    }
+  }
+  return allowed;
+}
+
+/**
+ * Parse a recipe method into structured steps.
+ *
+ * @param {string} text  free-form method: numbered, bulleted, line-per-step or a
+ *                       single paragraph
+ * @param {object} [options]
+ * @param {Array<string|object>} [options.ingredients]  that recipe's ingredient
+ *        lines/names; when given, ingredientsMentioned only returns names from
+ *        this list
+ * @returns {{ steps: Array<{index:number, text:string, durations:Array<object>,
+ *            temperature?:{value:number, unit:"C"|"F"},
+ *            ingredientsMentioned:string[]}>, warnings: string[] }}
+ *
+ * Each duration is { seconds, label, kind, approximate, rangeText? } with kind
+ * one of cook|simmer|bake|rest|chill|marinate|soak|proof|other. Steps are
+ * 0-indexed and their text has no numbering, bullets, HTML or double spaces.
+ */
+export function parseRecipeSteps(text, options = {}) {
+  const warnings = [];
+  const allowed = allowedIngredientNames(options.ingredients);
+  const texts = splitStepsText(text);
+
+  const steps = texts.map((stepText, index) => {
+    const analysis = analyzeDurations(stepText);
+    for (const warning of analysis.warnings) warnings.push(`Step ${index + 1}: ${warning}`);
+    const step = {
+      index,
+      text: stepText,
+      durations: analysis.durations.map((duration) => {
+        const entry = {
+          seconds: duration.seconds,
+          label: duration.label,
+          kind: duration.kind,
+          approximate: Boolean(duration.approximate),
+        };
+        if (duration.rangeText) entry.rangeText = duration.rangeText;
+        return entry;
+      }),
+      ingredientsMentioned: collectMentionedIngredients(stepText, allowed),
+    };
+    const temperature = detectTemperature(stepText);
+    if (temperature) step.temperature = temperature;
+    return step;
+  });
+
+  return { steps, warnings };
+}
+
+/* ==========================================================================
+ * SECTION 8c - CORRECTION STORE (deterministic self-learning)
+ * ========================================================================== */
+
+const CORRECTION_SCHEMA_VERSION = 1;
+
+/** Hard caps. Everything the store learns is bounded and LRU-evicted. */
+const CORRECTION_LIMITS = Object.freeze({
+  lines: 400,   // exact-line overrides
+  aliases: 800, // parser-name -> user-name mappings
+  data: 300,    // per-ingredient gramsPerPiece / gramsPerMl
+  items: 40,    // items kept per corrected line
+});
+
+/** Units that mean "the user counted objects" rather than weighed them. */
+const COUNT_UNITS = new Set([
+  "pcs", "pc", "piece", "pieces", "count", "each", "unit", "units", "item", "items",
+  "clove", "cloves", "slice", "slices", "leaf", "leaves", "sprig", "sprigs",
+]);
+
+/** Volume units -> millilitres, for learning grams per ml. */
+const VOLUME_FACTORS = Object.freeze({
+  ml: 1, millilitre: 1, milliliter: 1, cl: 10, dl: 100, l: 1000, litre: 1000, liter: 1000,
+  tsp: 5, teaspoon: 5, teaspoons: 5, tbsp: 15, tablespoon: 15, tablespoons: 15,
+  cup: 240, cups: 240, glass: 240, floz: 29.5735, pint: 473.176, quart: 946.353,
+});
+
+/** Normalise a line into the lookup key: lower case, single spaces, no period. */
+function correctionKey(line) {
+  return String(line == null ? "" : line)
+    .toLowerCase()
+    .replace(/[\s]+/g, " ")
+    .trim()
+    .replace(/[.!]+$/g, "")
+    .trim();
+}
+
+/** Coerce one corrected/original entry into { name, qty, unit }. */
+function correctionItem(entry) {
+  if (!entry || typeof entry !== "object") return null;
+  const name = String(entry.name == null ? "" : entry.name).trim();
+  if (!name) return null;
+  const rawQty = entry.qty != null ? entry.qty : entry.quantity;
+  const qty = Number(rawQty);
+  const unit = String(entry.unit == null ? "g" : entry.unit).trim().toLowerCase() || "g";
+  return { name, qty: Number.isFinite(qty) ? qty : 0, unit };
+}
+
+/** Normalise a whole signature (array of items); null entries are dropped. */
+function correctionSignature(items) {
+  if (!Array.isArray(items)) return [];
+  return items.map(correctionItem).filter(Boolean).slice(0, CORRECTION_LIMITS.items);
+}
+
+function signatureEquals(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].name.toLowerCase() !== b[i].name.toLowerCase()) return false;
+    if (Math.abs(a[i].qty - b[i].qty) > 1e-9) return false;
+    if (a[i].unit !== b[i].unit) return false;
+  }
+  return true;
+}
+
+/** Recompute the display-facing fields of an item after a numeric change. */
+function retuneItem(item, grams, ingredient, category) {
+  const nutrition = computeNutrition(grams, ingredient, category);
+  const quantity = roundAmount(grams);
+  const ui = convertMetricToUIFraction(quantity, "g", ingredient || category);
+  return {
+    ...item,
+    quantity,
+    unit: "g",
+    grams: roundAmount(grams),
+    nutrition,
+    metric: `${formatQuantity(quantity)} g`,
+    uiFraction: ui.label,
+    container: { name: ui.container, size: ui.size, unit: ui.unit, ratio: ui.ratio, fraction: ui.fraction },
+  };
+}
+
+/** Build a complete output item from a learned { name, qty, unit } entry. */
+function learnedItem(entry, source, input) {
+  const ingredient = getIngredient(entry.name);
+  const unit = entry.unit === "ml" ? "ml" : "g";
+  const quantity = roundAmount(entry.qty);
+  const category = ingredient ? ingredient.category : (source && source.category) || "other";
+  const profile = CATEGORY_PROFILES[category] || CATEGORY_PROFILES.other;
+  const density = ingredient ? ingredient.density : (source && source.density) || profile.density;
+  const grams = unit === "g" ? quantity : quantity * density;
+  const nutrition = computeNutrition(grams, ingredient, category);
+  const ui = convertMetricToUIFraction(quantity, unit, ingredient || category);
+  const name = ingredient ? ingredient.name : titleCase(entry.name);
+  return {
+    input,
+    name,
+    canonicalName: name,
+    quantity,
+    unit,
+    grams: roundAmount(grams),
+    density,
+    category,
+    categoryLabel: profile.label,
+    preparation: (source && source.preparation) || "",
+    vague: false,
+    always: source ? Boolean(source.always) : false,
+    metric: `${formatQuantity(quantity)} ${unit}`,
+    displayAmount: `${formatQuantity(quantity)} ${unit}`,
+    displayQty: quantity,
+    displayUnit: unit,
+    uiFraction: ui.label,
+    container: { name: ui.container, size: ui.size, unit: ui.unit, ratio: ui.ratio, fraction: ui.fraction },
+    range: null,
+    nutrition,
+    confidence: 0.99,
+    matchedBy: "learned|exact-line",
+    learned: true,
+  };
+}
+
+/**
+ * Deterministic correction store: learns from the edits a user makes to parsed
+ * ingredients and replays them on later parses.
+ *
+ * Learning happens at three levels:
+ *   a) exact line    - the same normalised line parses the same corrected way
+ *   b) aliases       - "curry" -> "curry leaves", applied to any line
+ *   c) per-ingredient data - gramsPerPiece / gramsPerMl inferred from the
+ *                      corrected quantity and unit, used by later conversions
+ *
+ * A correction overrides the built-in parse only after 2 agreeing records, or
+ * after 1 record from the store's own user (options.userId). A later
+ * contradictory correction wins. State is capped per collection and evicted
+ * least-recently-used; export()/import() round-trip through JSON with a
+ * schemaVersion so older data migrates.
+ *
+ * @param {object} [initial]  a previous export() payload to restore
+ * @param {object} [options]
+ * @param {string} [options.userId]  identity whose single correction counts
+ * @param {object} [options.limits]  override the caps
+ */
+export function createCorrectionStore(initial = null, options = {}) {
+  const limits = { ...CORRECTION_LIMITS, ...(options.limits || {}) };
+  const state = {
+    schemaVersion: CORRECTION_SCHEMA_VERSION,
+    userId: options.userId != null ? String(options.userId) : null,
+    seq: 0,
+    corrections: 0,
+    lines: new Map(),
+    aliases: new Map(),
+    data: new Map(),
+  };
+
+  const nextSeq = () => (state.seq += 1);
+  const sameUser = (userId) => userId != null && state.userId != null && String(userId) === state.userId;
+  const meetsThreshold = (entry) => Boolean(entry) && (entry.votes >= 2 || entry.trusted === true);
+
+  /** Drop the least-recently-used entries until the collection fits its cap. */
+  function evict(collection, cap) {
+    if (collection.size <= cap) return;
+    const ordered = [...collection.entries()].sort((a, b) => a[1].lastSeq - b[1].lastSeq);
+    let excess = collection.size - cap;
+    for (const [key] of ordered) {
+      if (excess <= 0) break;
+      collection.delete(key);
+      excess -= 1;
+    }
+  }
+
+  function evictAll() {
+    evict(state.lines, limits.lines);
+    evict(state.aliases, limits.aliases);
+    evict(state.data, limits.data);
+  }
+
+  /** Level (b): remember that the parser's name should read as the user's. */
+  function learnAlias(from, to, trusted) {
+    if (!from || !to) return;
+    const key = String(from).trim().toLowerCase();
+    const target = String(to).trim();
+    if (!key || !target || key === target.toLowerCase()) return;
+    const existing = state.aliases.get(key);
+    if (!existing) {
+      state.aliases.set(key, { to: target, votes: 1, trusted, lastSeq: nextSeq() });
+      return;
+    }
+    if (existing.to.toLowerCase() === target.toLowerCase()) {
+      existing.votes += 1;
+      existing.trusted = existing.trusted || trusted;
+      existing.lastSeq = nextSeq();
+      return;
+    }
+    // Contradiction: the most recent correction wins.
+    state.aliases.set(key, { to: target, votes: 1, trusted, lastSeq: nextSeq() });
+  }
+
+  /** Level (c): remember grams per piece / grams per ml for one ingredient. */
+  function learnData(name, field, value, trusted) {
+    if (!name || !(value > 0) || !Number.isFinite(value)) return;
+    const key = String(name).trim().toLowerCase();
+    let entry = state.data.get(key);
+    if (!entry) {
+      entry = { name: String(name).trim(), lastSeq: nextSeq() };
+      state.data.set(key, entry);
+    }
+    const current = entry[field];
+    if (!current) {
+      entry[field] = { value, votes: 1, trusted, lastSeq: nextSeq() };
+    } else if (Math.abs(current.value - value) <= Math.max(0.05 * current.value, 0.5)) {
+      // Agreeing evidence: fold into a running mean.
+      current.value = (current.value * current.votes + value) / (current.votes + 1);
+      current.votes += 1;
+      current.trusted = current.trusted || trusted;
+      current.lastSeq = nextSeq();
+    } else {
+      // Contradiction: the most recent correction wins.
+      entry[field] = { value, votes: 1, trusted, lastSeq: nextSeq() };
+    }
+    entry.lastSeq = nextSeq();
+  }
+
+  /** Apply a learned alias to one parsed item, recomputing macros if possible. */
+  function renameItem(item, newName) {
+    const ingredient = getIngredient(newName);
+    const name = ingredient ? ingredient.name : titleCase(newName);
+    const next = {
+      ...item,
+      name,
+      canonicalName: name,
+      learned: true,
+      confidence: Math.max(Number(item.confidence) || 0, 0.97),
+      matchedBy: `${item.matchedBy || "learned"}|alias`,
+    };
+    if (ingredient) {
+      next.category = ingredient.category;
+      next.categoryLabel = (CATEGORY_PROFILES[ingredient.category] || CATEGORY_PROFILES.other).label;
+      next.density = ingredient.density;
+      Object.assign(next, retuneItem(next, item.grams, ingredient, ingredient.category));
+    }
+    return next;
+  }
+
+  /** Apply learned gramsPerPiece / gramsPerMl to one parsed item. */
+  function applyLearnedData(item, entry) {
+    const displayUnit = String(item.displayUnit || "").toLowerCase();
+    const displayQty = Number(item.displayQty);
+    if (!(displayQty > 0)) return item;
+    let grams = null;
+    let source = null;
+    if (entry.gramsPerPiece && meetsThreshold(entry.gramsPerPiece) && (displayUnit === "pcs" || COUNT_UNITS.has(displayUnit))) {
+      grams = displayQty * entry.gramsPerPiece.value;
+      source = "piece";
+    } else if (entry.gramsPerMl && meetsThreshold(entry.gramsPerMl) && VOLUME_FACTORS[displayUnit] != null) {
+      grams = displayQty * VOLUME_FACTORS[displayUnit] * entry.gramsPerMl.value;
+      source = "density";
+    }
+    if (grams == null || !(grams > 0)) return item;
+    const ingredient = getIngredient(item.name);
+    const updated = retuneItem(item, grams, ingredient, item.category);
+    return {
+      ...updated,
+      learned: true,
+      confidence: Math.max(Number(item.confidence) || 0, 0.95),
+      matchedBy: `${item.matchedBy || "learned"}|learned:${source}`,
+    };
+  }
+
+  const api = {
+    /**
+     * Record one user correction.
+     * @param {{line:string, original:Array<{name:string,qty:number,unit:string}>,
+     *          corrected:Array<{name:string,qty:number,unit:string}>,
+     *          context?:{userId?:string}}} correction  `corrected` may be empty
+     *          when the user deleted the parsed item
+     * @returns {object} the store (chainable)
+     */
+    recordCorrection(correction) {
+      if (!correction || typeof correction !== "object") return api;
+      const key = correctionKey(correction.line);
+      if (!key) return api;
+      const before = correctionSignature(correction.original);
+      const after = correctionSignature(correction.corrected);
+      const userId = correction.context && correction.context.userId != null ? String(correction.context.userId) : null;
+      const trusted = sameUser(userId);
+      state.corrections += 1;
+
+      // (a) exact line
+      const existing = state.lines.get(key);
+      if (!existing) {
+        state.lines.set(key, { items: after, votes: 1, trusted, lastSeq: nextSeq() });
+      } else if (signatureEquals(existing.items, after)) {
+        existing.votes += 1;
+        existing.trusted = existing.trusted || trusted;
+        existing.lastSeq = nextSeq();
+      } else {
+        state.lines.set(key, { items: after, votes: 1, trusted, lastSeq: nextSeq() }); // most recent wins
+      }
+
+      const pairs = Math.min(before.length, after.length);
+      for (let i = 0; i < pairs; i++) {
+        const from = before[i];
+        const to = after[i];
+        // (b) alias: the parser called it one thing, the user another.
+        if (from.name && to.name && from.name.toLowerCase() !== to.name.toLowerCase()) learnAlias(from.name, to.name, trusted);
+        // (c) per-ingredient data, only when the ingredient itself is the same.
+        if (!from.name || !to.name || from.name.toLowerCase() !== to.name.toLowerCase()) continue;
+        if (!(from.qty > 0) || !(to.qty > 0)) continue;
+        const fromUnit = String(from.unit || "").toLowerCase();
+        const toUnit = String(to.unit || "").toLowerCase();
+        if (toUnit === "g" && COUNT_UNITS.has(fromUnit)) {
+          learnData(to.name, "gramsPerPiece", to.qty / from.qty, trusted); // "1 lemon" -> "120 g"
+        } else if (toUnit === "g" && VOLUME_FACTORS[fromUnit] != null) {
+          learnData(to.name, "gramsPerMl", to.qty / (from.qty * VOLUME_FACTORS[fromUnit]), trusted); // "1 cup" -> "90 g"
+        } else if (toUnit === "g" && fromUnit === "ml") {
+          learnData(to.name, "gramsPerMl", to.qty / from.qty, trusted);
+        }
+      }
+
+      evictAll();
+      return api;
+    },
+
+    /**
+     * Apply everything learned to one already-parsed line.
+     * Returns the original array untouched when nothing clears its threshold.
+     * Learned items carry `learned: true` and a raised `confidence`.
+     */
+    applyLearned(line, parsedItems) {
+      const items = Array.isArray(parsedItems) ? parsedItems : [];
+      if (!items.length) return items;
+      const key = correctionKey(line);
+      const lineEntry = key ? state.lines.get(key) : null;
+      if (lineEntry && meetsThreshold(lineEntry)) {
+        lineEntry.lastSeq = nextSeq();
+        return lineEntry.items.map((entry, index) => learnedItem(entry, items[index], String(line)));
+      }
+
+      let changed = false;
+      const out = items.map((item) => {
+        let next = item;
+        const alias = state.aliases.get(String(next.name || "").toLowerCase());
+        if (alias && meetsThreshold(alias)) {
+          alias.lastSeq = nextSeq();
+          next = renameItem(next, alias.to);
+          changed = true;
+        }
+        const data = state.data.get(String(next.name || "").toLowerCase());
+        if (data) {
+          const updated = applyLearnedData(next, data);
+          if (updated !== next) {
+            data.lastSeq = nextSeq();
+            next = updated;
+            changed = true;
+          }
+        }
+        return next;
+      });
+      return changed ? out : items;
+    },
+
+    /** Plain JSON snapshot (safe for localStorage / IndexedDB). */
+    export() {
+      const snapshot = {
+        schemaVersion: CORRECTION_SCHEMA_VERSION,
+        userId: state.userId,
+        seq: state.seq,
+        corrections: state.corrections,
+        lines: [],
+        aliases: [],
+        data: [],
+      };
+      for (const [key, entry] of state.lines) {
+        snapshot.lines.push({
+          key,
+          items: entry.items.map((item) => ({ ...item })),
+          votes: entry.votes,
+          trusted: Boolean(entry.trusted),
+          lastSeq: entry.lastSeq,
+        });
+      }
+      for (const [from, entry] of state.aliases) {
+        snapshot.aliases.push({ from, to: entry.to, votes: entry.votes, trusted: Boolean(entry.trusted), lastSeq: entry.lastSeq });
+      }
+      for (const [, entry] of state.data) {
+        const record = { name: entry.name, lastSeq: entry.lastSeq };
+        if (entry.gramsPerPiece) record.gramsPerPiece = { ...entry.gramsPerPiece };
+        if (entry.gramsPerMl) record.gramsPerMl = { ...entry.gramsPerMl };
+        snapshot.data.push(record);
+      }
+      return snapshot;
+    },
+
+    /**
+     * Restore an export() payload. Accepts older data without schemaVersion
+     * (treated as version 0) and never throws on malformed collections.
+     */
+    import(payload) {
+      if (!payload || typeof payload !== "object") return api;
+      state.lines.clear();
+      state.aliases.clear();
+      state.data.clear();
+      const version = Number(payload.schemaVersion || 0);
+      state.schemaVersion = CORRECTION_SCHEMA_VERSION;
+      if (payload.userId != null) state.userId = String(payload.userId);
+      state.seq = Number(payload.seq) || 0;
+      state.corrections = Number(payload.corrections) || 0;
+
+      const lines = Array.isArray(payload.lines) ? payload.lines : Object.entries(payload.lines || {}).map(([key, items]) => ({ key, items }));
+      for (const entry of lines) {
+        if (!entry || !entry.key) continue;
+        const items = correctionSignature(Array.isArray(entry.items) ? entry.items : []);
+        state.lines.set(correctionKey(entry.key), {
+          items,
+          votes: Number(entry.votes) || (version >= 1 ? 1 : 2), // v0 stored only accepted lines
+          trusted: Boolean(entry.trusted),
+          lastSeq: Number(entry.lastSeq) || nextSeq(),
+        });
+      }
+      const aliases = Array.isArray(payload.aliases) ? payload.aliases : Object.entries(payload.aliases || {}).map(([from, to]) => ({ from, to }));
+      for (const entry of aliases) {
+        if (!entry || !entry.from || !entry.to) continue;
+        state.aliases.set(String(entry.from).toLowerCase(), {
+          to: String(entry.to),
+          votes: Number(entry.votes) || (version >= 1 ? 1 : 2), // v0 stored only accepted aliases
+          trusted: Boolean(entry.trusted),
+          lastSeq: Number(entry.lastSeq) || nextSeq(),
+        });
+      }
+      const data = Array.isArray(payload.data) ? payload.data : [];
+      for (const entry of data) {
+        if (!entry || !entry.name) continue;
+        const record = { name: String(entry.name), lastSeq: Number(entry.lastSeq) || nextSeq() };
+        for (const field of ["gramsPerPiece", "gramsPerMl"]) {
+          const value = entry[field];
+          const numeric = typeof value === "number" ? value : value && value.value;
+          if (numeric > 0) {
+            record[field] = {
+              value: Number(numeric),
+              votes: (value && Number(value.votes)) || (version >= 1 ? 1 : 2),
+              trusted: Boolean(value && value.trusted),
+              lastSeq: (value && Number(value.lastSeq)) || nextSeq(),
+            };
+          }
+        }
+        state.data.set(record.name.toLowerCase(), record);
+      }
+      evictAll();
+      return api;
+    },
+
+    /** Counts and remaining capacity, for UI or debugging. */
+    stats() {
+      let pieces = 0;
+      let densities = 0;
+      for (const entry of state.data.values()) {
+        if (entry.gramsPerPiece) pieces += 1;
+        if (entry.gramsPerMl) densities += 1;
+      }
+      return {
+        schemaVersion: CORRECTION_SCHEMA_VERSION,
+        userId: state.userId,
+        corrections: state.corrections,
+        lines: state.lines.size,
+        aliases: state.aliases.size,
+        ingredients: state.data.size,
+        gramsPerPiece: pieces,
+        gramsPerMl: densities,
+        capacity: { ...limits },
+      };
+    },
+  };
+
+  if (initial) api.import(initial);
+  return api;
+}
+
+/**
+ * Self tests for the v1.1 extensions: recipe steps, the correction store,
+ * displayUnit/displayQty and the South Asian staple matrix. Registered from
+ * runSelfTests() so `node ingredient-engine.js` covers everything.
+ */
+function registerExtensionTests(test) {
+  /* ---------------- 10. Recipe steps ---------------- */
+  test("steps: numbered with periods keeps 0-based indices and strips markers", () => {
+    const { steps } = parseRecipeSteps("1. Boil the water.\n2. Add the pasta.");
+    assertEqual(steps.length, 2, "step count");
+    assertEqual(steps[0].index, 0, "first index");
+    assertEqual(steps[1].index, 1, "second index");
+    assertEqual(steps[0].text, "Boil the water.", "first text");
+    assertEqual(steps[1].text, "Add the pasta.", "second text");
+  });
+
+  test("steps: numbered with parentheses", () => {
+    const { steps } = parseRecipeSteps("1) Chop the onions\n2) Fry them");
+    assertEqual(steps.length, 2, "step count");
+    assertEqual(steps[0].text, "Chop the onions", "first text");
+    assertEqual(steps[1].text, "Fry them", "second text");
+  });
+
+  test("steps: Step N: markers", () => {
+    const { steps } = parseRecipeSteps("Step 1: Preheat the oven.\nStep 2: Bake the bread.");
+    assertEqual(steps.length, 2, "step count");
+    assertEqual(steps[0].text, "Preheat the oven.", "first text");
+  });
+
+  test("steps: bulleted list", () => {
+    const { steps } = parseRecipeSteps("- Mix well.\n- Serve hot.");
+    assertEqual(steps.length, 2, "step count");
+    assertEqual(steps[0].text, "Mix well.", "first text");
+    assertEqual(steps[1].index, 1, "second index");
+  });
+
+  test("steps: one step per line without markers", () => {
+    const { steps } = parseRecipeSteps("Heat the oil\nAdd the onions\nStir gently");
+    assertEqual(steps.length, 3, "step count");
+    assertEqual(steps[1].text, "Add the onions", "second text");
+  });
+
+  test("steps: one paragraph splits into sentences", () => {
+    const { steps } = parseRecipeSteps("Heat the oil. Add the onions. Stir until golden.");
+    assertEqual(steps.length, 3, "step count");
+    assertEqual(steps[2].text, "Stir until golden.", "third text");
+  });
+
+  test("steps: HTML is stripped and paragraphs split", () => {
+    const { steps } = parseRecipeSteps("<p>Boil the pasta.</p><p>Drain it.</p>");
+    assertEqual(steps.length, 2, "step count");
+    assertEqual(steps[0].text, "Boil the pasta.", "first text");
+    assertEqual(steps[1].text, "Drain it.", "second text");
+  });
+
+  test("steps: entities and double spaces are cleaned", () => {
+    const { steps } = parseRecipeSteps("<p>Mix&nbsp;well  now.</p>");
+    assertEqual(steps[0].text, "Mix well now.", "cleaned text");
+  });
+
+  test("steps: a Method heading is not a step", () => {
+    const { steps } = parseRecipeSteps("Method\n1. Boil the rice.");
+    assertEqual(steps.length, 1, "step count");
+    assertEqual(steps[0].text, "Boil the rice.", "text");
+  });
+
+  test("durations: plain minutes", () => {
+    const durations = detectDurations("Cook for 10 minutes.");
+    assertEqual(durations.length, 1, "one duration");
+    assertEqual(durations[0].seconds, 600, "seconds");
+    assertEqual(durations[0].kind, "cook", "kind");
+    assertEqual(durations[0].approximate, false, "not approximate");
+  });
+
+  test("durations: ranges use the lower bound and keep rangeText", () => {
+    const durations = detectDurations("Simmer for 10-15 minutes until tender.");
+    assertEqual(durations.length, 1, "one duration");
+    assertEqual(durations[0].seconds, 600, "lower bound");
+    assertEqual(durations[0].rangeText, "10-15 minutes", "rangeText");
+    assertEqual(durations[0].label, "until tender", "label from purpose");
+    assertEqual(durations[0].kind, "simmer", "kind");
+  });
+
+  test("durations: compound hours and minutes", () => {
+    const durations = detectDurations("Bake for 1 hour 30 minutes.");
+    assertEqual(durations.length, 1, "one duration");
+    assertEqual(durations[0].seconds, 5400, "combined seconds");
+    assertEqual(durations[0].kind, "bake", "kind");
+  });
+
+  test("durations: worded times", () => {
+    assertEqual(detectDurations("Rest for an hour.")[0].seconds, 3600, "an hour");
+    assertEqual(detectDurations("Chill for half an hour.")[0].seconds, 1800, "half an hour");
+    assertEqual(detectDurations("Stand for half an hour.")[0].kind, "rest", "kind");
+  });
+
+  test("durations: overnight is 8 hours and approximate", () => {
+    const durations = detectDurations("Chill overnight.");
+    assertEqual(durations.length, 1, "one duration");
+    assertEqual(durations[0].seconds, 28800, "8 hours");
+    assertEqual(durations[0].approximate, true, "approximate");
+    assertEqual(durations[0].kind, "chill", "kind");
+  });
+
+  test("durations: 'until golden' has no duration", () => {
+    assertEqual(detectDurations("Bake until golden brown.").length, 0, "no duration");
+  });
+
+  test("durations: '2 min per side' yields two durations", () => {
+    const durations = detectDurations("Grill for 2 minutes per side.");
+    assertEqual(durations.length, 2, "two sides");
+    assertEqual(durations[0].seconds, 120, "first side seconds");
+    assertEqual(durations[1].seconds, 120, "second side seconds");
+    assert(durations[1].label.includes("second side"), "second side label");
+  });
+
+  test("durations: prep metadata is not a timer", () => {
+    assertEqual(detectDurations("This takes 20 minutes to prepare.").length, 0, "takes to prepare");
+    assertEqual(detectDurations("After 5 minutes you will see the colour change.").length, 1, "real timer");
+  });
+
+  test("durations: annotation kinds", () => {
+    assertEqual(detectDurations("Simmer for 10 minutes.")[0].kind, "simmer", "simmer");
+    assertEqual(detectDurations("Chill for 2 hours.")[0].kind, "chill", "chill");
+    assertEqual(detectDurations("Marinate for 4 hours.")[0].kind, "marinate", "marinate");
+    assertEqual(detectDurations("Soak for 30 minutes.")[0].kind, "soak", "soak");
+    assertEqual(detectDurations("Prove for 1 hour.")[0].kind, "proof", "proof");
+  });
+
+  test("steps: 'for 3 whistles' is reported as a warning, not a duration", () => {
+    const { steps, warnings } = parseRecipeSteps("Cook for 3 whistles.");
+    assertEqual(steps[0].durations.length, 0, "no duration");
+    assertEqual(warnings.length, 1, "one warning");
+    assert(warnings[0].includes("Step 1"), "warning names the step");
+  });
+
+  test("steps: oven temperature", () => {
+    const celsius = parseRecipeSteps("Bake at 200°C for 20 minutes.").steps[0];
+    assertEqual(celsius.temperature.value, 200, "celsius value");
+    assertEqual(celsius.temperature.unit, "C", "celsius unit");
+    const fahrenheit = parseRecipeSteps("Roast at 400 F for 30 minutes.").steps[0];
+    assertEqual(fahrenheit.temperature.value, 400, "fahrenheit value");
+    assertEqual(fahrenheit.temperature.unit, "F", "fahrenheit unit");
+  });
+
+  test("steps: ingredientsMentioned matches the recipe's own list", () => {
+    const { steps } = parseRecipeSteps("Add the chopped tomatoes and the garlic.", {
+      ingredients: ["2 tomatoes", "3 cloves garlic", "1 onion"],
+    });
+    assert(steps[0].ingredientsMentioned.includes("Tomato"), "tomato mentioned");
+    assert(steps[0].ingredientsMentioned.includes("Garlic"), "garlic mentioned");
+    assert(!steps[0].ingredientsMentioned.includes("Onion"), "onion not mentioned");
+  });
+
+  test("steps: several sentences inside one numbered block are separate steps", () => {
+    const { steps } = parseRecipeSteps("Step 1: Mix the atta. Rest for 10 minutes. Then fry the chillies.");
+    assertEqual(steps.length, 3, "step count");
+    assertEqual(steps[1].text, "Rest for 10 minutes.", "second step text");
+    assertEqual(steps[1].durations[0].seconds, 600, "duration stays with its sentence");
+  });
+
+  test("durations: the nearest verb decides the kind", () => {
+    const durations = detectDurations("Rest for 10 minutes. Then fry for 2 minutes.");
+    assertEqual(durations[0].kind, "rest", "first duration");
+    assertEqual(durations[1].kind, "cook", "second duration");
+  });
+
+  test("durations: purpose does not leak from the next sentence", () => {
+    const durations = detectDurations("Rest for 10 minutes. Fry until golden.");
+    assertEqual(durations[0].label, "rest", "no borrowed purpose");
+  });
+
+  test("splitStepsText is exported and returns plain strings", () => {
+    const steps = splitStepsText("1. One.\n2. Two.");
+    assertEqual(steps.length, 2, "step count");
+    assertEqual(typeof steps[0], "string", "string step");
+  });
+
+  /* ---------------- 11. Correction store ---------------- */
+  const correctedLine = "1 cup besan";
+
+  test("corrections: one anonymous record does not override the parse", () => {
+    const store = createCorrectionStore();
+    const parsed = parseIngredients(correctedLine);
+    store.recordCorrection({
+      line: correctedLine,
+      original: [{ name: parsed[0].name, qty: 91.2, unit: "g" }],
+      corrected: [{ name: parsed[0].name, qty: 100, unit: "g" }],
+    });
+    const learned = store.applyLearned(correctedLine, parsed);
+    assertEqual(learned[0].quantity, 91.2, "one vote keeps the built-in parse");
+  });
+
+  test("corrections: two agreeing records override the line", () => {
+    const store = createCorrectionStore();
+    const parsed = parseIngredients(correctedLine);
+    for (let i = 0; i < 2; i++) {
+      store.recordCorrection({
+        line: correctedLine,
+        original: [{ name: parsed[0].name, qty: 91.2, unit: "g" }],
+        corrected: [{ name: parsed[0].name, qty: 100, unit: "g" }],
+      });
+    }
+    const learned = store.applyLearned(correctedLine, parsed);
+    assertEqual(learned[0].quantity, 100, "two votes override");
+    assertEqual(learned[0].learned, true, "learned flag");
+    assert(learned[0].confidence >= 0.9, "confidence raised");
+  });
+
+  test("corrections: one record from the store's own user is enough", () => {
+    const store = createCorrectionStore(null, { userId: "chef-1" });
+    const parsed = parseIngredients(correctedLine);
+    store.recordCorrection({
+      line: correctedLine,
+      original: [{ name: parsed[0].name, qty: 91.2, unit: "g" }],
+      corrected: [{ name: parsed[0].name, qty: 110, unit: "g" }],
+      context: { userId: "chef-1" },
+    });
+    assertEqual(store.applyLearned(correctedLine, parsed)[0].quantity, 110, "same-user override");
+  });
+
+  test("corrections: line keys are normalised (case and spacing)", () => {
+    const store = createCorrectionStore();
+    const parsed = parseIngredients(correctedLine);
+    for (let i = 0; i < 2; i++) {
+      store.recordCorrection({
+        line: "  1  CUP   Besan. ",
+        original: [{ name: parsed[0].name, qty: 91.2, unit: "g" }],
+        corrected: [{ name: parsed[0].name, qty: 100, unit: "g" }],
+      });
+    }
+    assertEqual(store.applyLearned(correctedLine, parsed)[0].quantity, 100, "normalised key matches");
+  });
+
+  test("corrections: ingredient aliases learned from renames apply everywhere", () => {
+    const store = createCorrectionStore();
+    for (let i = 0; i < 2; i++) {
+      store.recordCorrection({
+        line: "3 cloves of garlic",
+        original: [{ name: "Garlic", qty: 15, unit: "g" }],
+        corrected: [{ name: "Garlic Paste", qty: 15, unit: "g" }],
+      });
+    }
+    const items = parseIngredients("4 cloves of garlic", { corrections: store });
+    assertEqual(items[0].name, "Garlic Paste", "alias applied to another line");
+    assertEqual(items[0].learned, true, "learned flag");
+  });
+
+  test("corrections: contradictory records go to the most recent", () => {
+    const store = createCorrectionStore();
+    const parsed = parseIngredients(correctedLine);
+    const original = [{ name: parsed[0].name, qty: 91.2, unit: "g" }];
+    for (const qty of [100, 100]) {
+      store.recordCorrection({ line: correctedLine, original, corrected: [{ name: parsed[0].name, qty, unit: "g" }] });
+    }
+    assertEqual(store.applyLearned(correctedLine, parsed)[0].quantity, 100, "first correction");
+    store.recordCorrection({ line: correctedLine, original, corrected: [{ name: parsed[0].name, qty: 130, unit: "g" }] });
+    assertEqual(store.applyLearned(correctedLine, parsed)[0].quantity, 91.2, "a single contradiction resets the votes");
+    store.recordCorrection({ line: correctedLine, original, corrected: [{ name: parsed[0].name, qty: 130, unit: "g" }] });
+    assertEqual(store.applyLearned(correctedLine, parsed)[0].quantity, 130, "most recent wins");
+  });
+
+  test("corrections: grams per piece is learned from counted items", () => {
+    const store = createCorrectionStore();
+    for (let i = 0; i < 2; i++) {
+      store.recordCorrection({
+        line: "2 lemons",
+        original: [{ name: "Lemon", qty: 2, unit: "pcs" }],
+        corrected: [{ name: "Lemon", qty: 240, unit: "g" }],
+      });
+    }
+    const items = parseIngredients("1 lemon", { corrections: store });
+    assertEqual(items[0].quantity, 120, "learned grams per piece");
+    assertEqual(items[0].unit, "g", "unit");
+  });
+
+  test("corrections: grams per ml is learned from volume corrections", () => {
+    const store = createCorrectionStore();
+    for (let i = 0; i < 2; i++) {
+      store.recordCorrection({
+        line: "1 cup besan",
+        original: [{ name: "Besan (Gram Flour)", qty: 1, unit: "cup" }],
+        corrected: [{ name: "Besan (Gram Flour)", qty: 100, unit: "g" }],
+      });
+    }
+    const items = parseIngredients("1 cup besan", { corrections: store });
+    assertEqual(items[0].quantity, 100, "learned density applied to a fresh parse");
+  });
+
+  test("corrections: deleted items stay deleted", () => {
+    const store = createCorrectionStore();
+    const parsed = parseIngredients("1 tsp salt and pepper");
+    for (let i = 0; i < 2; i++) {
+      store.recordCorrection({
+        line: "1 tsp salt and pepper",
+        original: parsed.map((item) => ({ name: item.name, qty: item.quantity, unit: item.unit })),
+        corrected: [],
+      });
+    }
+    assertEqual(store.applyLearned("1 tsp salt and pepper", parsed).length, 0, "items deleted");
+  });
+
+  test("corrections: export / import round-trips through JSON", () => {
+    const store = createCorrectionStore(null, { userId: "u-9" });
+    for (let i = 0; i < 2; i++) {
+      store.recordCorrection({
+        line: "1 tbsp besan",
+        original: [{ name: "Besan (Gram Flour)", qty: 5.7, unit: "g" }],
+        corrected: [{ name: "Besan (Gram Flour)", qty: 8, unit: "g" }],
+      });
+    }
+    const snapshot = JSON.parse(JSON.stringify(store.export()));
+    assertEqual(snapshot.schemaVersion, 1, "schemaVersion present");
+    const restored = createCorrectionStore(snapshot);
+    const parsed = parseIngredients("1 tbsp besan");
+    assertEqual(restored.applyLearned("1 tbsp besan", parsed)[0].quantity, 8, "restored override");
+    assertEqual(restored.stats().lines, store.stats().lines, "line count survives");
+    const legacy = createCorrectionStore({ lines: { "1 cup besan": [{ name: "Besan (Gram Flour)", qty: 100, unit: "g" }] } });
+    assertEqual(legacy.applyLearned("1 cup besan", parsed)[0].quantity, 100, "legacy data migrates as accepted");
+  });
+
+  test("corrections: stats reports collections and caps", () => {
+    const store = createCorrectionStore();
+    store.recordCorrection({ line: "1 cup besan", original: [], corrected: [{ name: "Besan (Gram Flour)", qty: 100, unit: "g" }] });
+    const stats = store.stats();
+    assertEqual(stats.lines, 1, "line count");
+    assertEqual(stats.corrections, 1, "correction count");
+    assert(stats.capacity.lines > 0, "caps reported");
+  });
+
+  test("corrections: the store is bounded and evicts the least recent", () => {
+    const store = createCorrectionStore(null, { limits: { lines: 3 } });
+    for (let i = 0; i < 5; i++) {
+      for (let vote = 0; vote < 2; vote++) {
+        store.recordCorrection({
+          line: `1 cup besan ${i}`,
+          original: [{ name: "Besan (Gram Flour)", qty: 91.2, unit: "g" }],
+          corrected: [{ name: "Besan (Gram Flour)", qty: 100 + i, unit: "g" }],
+        });
+      }
+    }
+    assertEqual(store.stats().lines, 3, "cap enforced");
+    const old = parseIngredients("1 cup besan 0");
+    assertEqual(store.applyLearned("1 cup besan 0", old)[0].quantity, 91.2, "oldest entry evicted");
+    const fresh = parseIngredients("1 cup besan 4");
+    assertEqual(store.applyLearned("1 cup besan 4", fresh)[0].quantity, 104, "newest entry kept");
+  });
+
+  test("corrections: optional store leaves parsing unchanged", () => {
+    const line = "2 1/2 cups whole milk";
+    const plain = parseIngredients(line);
+    const withStore = parseIngredients(line, { corrections: createCorrectionStore() });
+    assertEqual(withStore[0].quantity, plain[0].quantity, "quantity unchanged");
+    assertEqual(withStore[0].name, plain[0].name, "name unchanged");
+    assertEqual(withStore[0].learned, undefined, "no learned flag");
+  });
+
+  /* ---------------- 12. displayUnit / displayQty ---------------- */
+  test("display: cups keep the source unit and quantity", () => {
+    const item = parseIngredient("2 1/2 cups whole milk");
+    assertEqual(item.displayQty, 2.5, "displayQty");
+    assertEqual(item.displayUnit, "cup", "displayUnit");
+    assertEqual(item.quantity, 600, "metric quantity unchanged");
+  });
+
+  test("display: spoons and grams", () => {
+    assertEqual(parseIngredient("3 tbsp olive oil").displayUnit, "tbsp", "tbsp");
+    assertEqual(parseIngredient("3 tbsp olive oil").displayQty, 3, "tbsp qty");
+    assertEqual(parseIngredient("500 g chicken breast").displayUnit, "g", "g");
+    assertEqual(parseIngredient("500 g chicken breast").displayQty, 500, "g qty");
+    assertEqual(parseIngredient("2 tsp salt").displayUnit, "tsp", "tsp");
+  });
+
+  test("display: counted items use the measure word or pcs", () => {
+    assertEqual(parseIngredient("3 cloves of garlic").displayUnit, "clove", "clove");
+    assertEqual(parseIngredient("3 cloves of garlic").displayQty, 3, "clove qty");
+    assertEqual(parseIngredient("2 eggs").displayUnit, "pcs", "pcs");
+    assertEqual(parseIngredient("2 eggs").displayQty, 2, "pcs qty");
+    const cans = parseIngredient("2 x 400 g cans chopped tomatoes");
+    assertEqual(cans.displayUnit, "can", "package word");
+    assertEqual(cans.displayQty, 2, "packages");
+  });
+
+  /* ---------------- 13. South Asian staples ---------------- */
+  test("staples: flours use measured cup weights", () => {
+    assertClose(parseIngredient("1 cup atta").quantity, 120, 0.001, "atta (0.50 g/ml)");
+    assertClose(parseIngredient("1 cup besan").quantity, 91.2, 0.001, "besan (0.38 g/ml)");
+    assertClose(parseIngredient("1 cup maida").quantity, 124.8, 0.001, "maida (0.52 g/ml)");
+    assertClose(parseIngredient("1 cup poha").quantity, 72, 0.001, "poha (0.30 g/ml)");
+    assertClose(parseIngredient("1 cup rava").quantity, 168, 0.001, "rava = semolina (0.70 g/ml)");
+  });
+
+  test("staples: ghee, paneer, curd and jaggery", () => {
+    assertClose(parseIngredient("2 tbsp ghee").quantity, 27.3, 0.01, "ghee density");
+    assertEqual(parseIngredient("250 g paneer").name, "Paneer", "paneer");
+    assertClose(parseIngredient("250 g paneer").nutrition.protein, 45.8, 0.01, "paneer protein");
+    assertEqual(parseIngredient("1 cup curd").unit, "ml", "curd is a liquid");
+    assertClose(parseIngredient("1 cup curd").grams, 247.2, 0.01, "curd density");
+    assertClose(parseIngredient("100 g jaggery").nutrition.kcal, 383, 0.01, "jaggery kcal");
+  });
+
+  test("staples: dals resolve to their own ingredients", () => {
+    assertEqual(parseIngredient("1 cup toor dal").name, "Toor Dal", "toor");
+    assertEqual(parseIngredient("1 cup moong dal").name, "Moong Dal", "moong");
+    assertEqual(parseIngredient("1 cup masoor dal").name, "Masoor Dal", "masoor");
+    assertEqual(parseIngredient("1 cup chana dal").name, "Chana Dal", "chana");
+    assertEqual(parseIngredient("1 cup urad dal").name, "Urad Dal", "urad");
+  });
+
+  test("staples: spices and aromatics", () => {
+    assertEqual(parseIngredient("1 tsp haldi").name, "Turmeric", "haldi alias");
+    assertEqual(parseIngredient("1 tsp jeera").name, "Cumin", "jeera alias");
+    assertEqual(parseIngredient("1 pinch hing").name, "Hing (Asafoetida)", "hing");
+    assertEqual(parseIngredient("1 tsp amchur").name, "Amchur (Mango Powder)", "amchur");
+    assertEqual(parseIngredient("1 tsp chaat masala").name, "Chaat Masala", "chaat masala");
+    assertEqual(parseIngredient("1 tbsp kasuri methi").name, "Kasuri Methi", "kasuri methi");
+    assertEqual(parseIngredient("10 curry leaves").name, "Curry Leaves", "curry leaves");
+  });
+
+  test("staples: piece weights for small produce", () => {
+    const chilies = parseIngredient("2 green chilies");
+    assertEqual(chilies.name, "Green Chili", "green chili name");
+    assertClose(chilies.quantity, 10, 0.001, "5 g per green chili");
+  });
+
+  test("staples: cup weights are no longer the 240 g generic fallback", () => {
+    const atta = parseIngredient("1 cup atta");
+    assert(atta.quantity < 200, `atta cup should not be 240 g (got ${atta.quantity})`);
+    assert(atta.nutrition.kcal > 300, "atta carries real macros");
+  });
+
+  test("directives: 'to taste' and 'as needed' both set always", () => {
+    for (const line of ["salt, to taste", "salt as needed", "1 tsp salt, or to taste"]) {
+      const item = parseIngredient(line);
+      assertEqual(item.always, true, `${line} -> always`);
+      assertEqual(item.name, "Salt", `${line} -> name`);
+    }
+    assertEqual(parseIngredient("1 tsp salt").always, false, "plain salt is not always");
+  });
+}
 
 /* ==========================================================================
  * SECTION 9 - SELF TESTS
@@ -2246,6 +3681,9 @@ export function runSelfTests() {
     }
     assert(threw, "expected a TypeError for empty input");
   });
+
+  /* ---------------- 10-13. Extensions ---------------- */
+  registerExtensionTests(test);
 
   /* ---------------- 9. Accuracy corpus ---------------- */
   const accuracy = scoreCorpus(ACCURACY_CORPUS);

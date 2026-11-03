@@ -1,6 +1,9 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#ffffff"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="favicon.ico" sizes="any"><link rel="icon" type="image/svg+xml" href="icon.svg"><link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#ffffff">
+<meta name="description" content="Prepd plans your meals, tracks your pantry and builds your grocery list.">
+<meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Prepd"><meta name="apple-mobile-web-app-status-bar-style" content="default"><link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="favicon.ico" sizes="any"><link rel="icon" type="image/svg+xml" href="icon.svg"><link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>Prepd</title>
 <script>window.va=window.va||function(){(window.vaq=window.vaq||[]).push(arguments)};</script>
 <script defer src="/_vercel/insights/script.js"></script>
@@ -58,6 +61,34 @@ select{appearance:none;-webkit-appearance:none;padding-right:2.2rem;cursor:point
 .tchip button{background:rgba(255,255,255,.25);box-shadow:none;padding:.2rem .55rem;border-radius:2rem;font-size:.8rem;color:#fff}
 .tchip.ring{animation:shake .5s 3}
 @keyframes pop{from{transform:scale(.6);opacity:0}}@keyframes shake{25%{transform:rotate(-3deg)}75%{transform:rotate(3deg)}}
+.hello{background:linear-gradient(135deg,#fff3f0,#fff 70%);border:2px solid var(--line);box-shadow:0 4px 0 var(--line);border-radius:1.8rem;padding:1.1rem 1.2rem 1rem;margin-bottom:1rem;position:relative;overflow:hidden}
+.hello:after{content:"";position:absolute;right:-2.4rem;top:-2.4rem;width:7.5rem;height:7.5rem;border-radius:50%;background:var(--accT)}
+.hello>*{position:relative;z-index:1}
+.hi{font-size:1.5rem;font-weight:800;letter-spacing:-.03em;line-height:1.15}
+.wave{display:inline-block;transform-origin:70% 70%;animation:wave 2.4s ease-in-out infinite}
+@keyframes wave{0%,60%,100%{transform:rotate(0)}10%,30%{transform:rotate(14deg)}20%,40%{transform:rotate(-8deg)}50%{transform:rotate(10deg)}}
+.hq{color:var(--mute);margin:.15rem 0 .8rem}
+.dayb{margin:-.1rem 0 .9rem}.dl{display:flex;justify-content:space-between;font-size:.8rem;color:var(--mute)}
+.chips{display:flex;flex-wrap:wrap;gap:.45rem}
+.cp{background:#fff;color:var(--acc);border:2px solid #ffd9d4;box-shadow:0 2px 0 #ffd9d4;padding:.45rem .85rem;border-radius:2rem;font-size:.88rem}
+.acct{display:flex;align-items:center;gap:.9rem;background:var(--card);border:2px solid var(--line);box-shadow:0 3px 0 var(--line);border-radius:1.4rem;padding:.9rem 1rem;margin-bottom:.7rem}
+.acct .t{flex:1;min-width:0}.acct .s{color:var(--mute);font-size:.86rem}
+.av{width:2.8rem;height:2.8rem;border-radius:50%;display:grid;place-items:center;background:var(--accT);color:var(--acc);font-weight:800;font-size:1.25rem;flex:none}
+.uh{min-height:1.2em;font-size:.84rem;margin:-.3rem 0 .5rem;color:var(--mute)}.uh.ok{color:#2a9d5c}.uh.bad{color:var(--warn)}
+.danger{background:var(--warn);box-shadow:0 3px 0 rgba(120,20,60,.3)}
+.sus{color:var(--warn);font-size:.8rem;font-weight:650;margin:-.2rem 0 .35rem}input.warnb{border-color:var(--warn);background:#fff7fa}
+.bp{position:fixed;z-index:70;pointer-events:none;font-size:1.25rem;transform:translate(-50%,-50%);animation:fly .9s var(--ease) forwards}
+@keyframes fly{to{transform:translate(calc(-50% + var(--dx)),calc(-50% + var(--dy))) rotate(var(--r)) scale(.5);opacity:0}}
+.em.sm{--c:var(--acc);width:2.5rem;height:2.5rem;font-size:1.3rem}
+@keyframes rise{from{opacity:0;transform:translateY(14px)}}
+.stagger>*,.stagger #body>*{animation:rise .5s var(--ease) both}
+.stagger>:nth-child(2),.stagger #body>:nth-child(2){animation-delay:.05s}.stagger>:nth-child(3),.stagger #body>:nth-child(3){animation-delay:.1s}
+.stagger>:nth-child(4),.stagger #body>:nth-child(4){animation-delay:.15s}.stagger>:nth-child(5),.stagger #body>:nth-child(5){animation-delay:.2s}
+.stagger>:nth-child(6),.stagger #body>:nth-child(6){animation-delay:.25s}.stagger>:nth-child(7),.stagger #body>:nth-child(7){animation-delay:.3s}
+.stagger>:nth-child(n+8),.stagger #body>:nth-child(n+8){animation-delay:.35s}
+nav button{border-radius:1.2rem;transition:background .3s,color .3s,transform .12s var(--ease)}nav button.on{background:var(--accT)}
+#ob{position:fixed;top:calc(env(safe-area-inset-top) + .5rem);left:50%;transform:translate(-50%,-250%);background:var(--ink);color:#fff;padding:.4rem 1rem;border-radius:2rem;font-size:.82rem;z-index:80;transition:transform .45s var(--bounce);white-space:nowrap}#ob.on{transform:translate(-50%,0)}
+.wclip{overflow:hidden;touch-action:pan-y;user-select:none}.wnav{display:flex;gap:.6rem}.wnav>*{flex:1;padding:.95rem;font-size:1.02rem}
 .empty{text-align:center;color:var(--mute);padding:3rem 1rem}.empty:before{content:attr(data-e);display:block;font-size:3rem;margin-bottom:.4rem;animation:wob 2.4s ease-in-out infinite}@keyframes wob{50%{transform:rotate(8deg) scale(1.08)}}.empty b{display:block;color:var(--ink);font-size:1.1rem;margin-bottom:.2rem}
 .fab{position:fixed;right:max(1rem,calc(50% - 17rem));bottom:calc(5.2rem + env(safe-area-inset-bottom));width:3.4rem;height:3.4rem;border-radius:50%;padding:0;font-size:1.8rem;box-shadow:0 6px 20px rgba(255,77,61,.45);z-index:4}
 nav{position:fixed;inset:auto 0 0;z-index:6;display:flex;justify-content:center;gap:.5rem;padding:.4rem .5rem calc(env(safe-area-inset-bottom) + .4rem);background:var(--glass);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);border-top:1px solid var(--line)}
@@ -72,4 +103,4 @@ nav button{flex:1;max-width:9rem;background:none;color:var(--mute);display:flex;
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style></head><body>
 <header><div class="brand"><svg viewBox="0 0 32 32" width="26" height="26"><circle cx="16" cy="18" r="11" fill="#ff4d3d"/><path d="M16 8c-1-3-4-4-6-3 2 0 3 1 3 3-2 0-4 1-5 2 3-1 6 0 8-1 2 1 5 0 8 1-1-1-3-2-5-2 0-2 1-3 3-3-2-1-5 0-6 3z" fill="#2fb36b"/></svg>Prepd</div><h1 id="t"></h1><div class="sub" id="s"></div></header><main id="m"></main>
-<div id="tb"></div><nav id="n"></nav><script type="module" src="app.js"></script></body></html>
+<div id="ob">You’re offline · changes are saved on this device</div><div id="tb"></div><nav id="n"></nav><script type="module" src="app.js"></script></body></html>

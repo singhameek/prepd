@@ -6,7 +6,7 @@ import {resolveUnits,learn,loadProfiles} from './units.js';
 import {splitSteps,detectTimers,fmtTime} from './steps.js';
 import * as timers from './timers.js';
 import {loadCorrections,learn as learnCorr} from './corrections.js';
-import {UNITS,deductIngredientsFromPantry,checkUpcomingMenuShortages,convertMetricToFractionalUI,restockFromGrocery,groceryText,planScale,isStaple,pkgFor,setPrefs,sizeText} from './inventoryEngine.js';
+import {UNITS,convertAmount,deductIngredientsFromPantry,checkUpcomingMenuShortages,convertMetricToFractionalUI,restockFromGrocery,groceryText,planScale,isStaple,pkgFor,setPrefs,sizeText} from './inventoryEngine.js';
 const q1=n=>+(+n).toFixed(1);
 const unitSel=(id,sel='g',extra='',list=UNITS)=>`<select ${id?`id="${id}"`:''} ${extra}>${list.map(u=>`<option value="${u}"${u===sel?' selected':''}>${u==='l'?'L':u}</option>`).join('')}</select>`;
 const $=(s,r=document)=>r.querySelector(s),m=$('#m');
@@ -21,6 +21,31 @@ const ICON={plan:'<path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 
 let tab='plan',sel=today();
 const reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
 const pop=(el,dx=0)=>!reduce&&el.animate([{opacity:0,transform:`translateX(${dx}px) translateY(${dx?0:10}px)`},{opacity:1,transform:'none'}],{duration:300,easing:'cubic-bezier(.2,.9,.3,1)'});
+const EMO=[[/potato|aloo/,'🥔'],[/onion|shallot|scallion/,'🧅'],[/tomato/,'🍅'],[/garlic/,'🧄'],[/ginger/,'🫚'],[/chil+i|capsicum|jalape/,'🌶️'],[/carrot/,'🥕'],[/cauliflower|broccoli|gobi/,'🥦'],[/spinach|palak|kale|lettuce|cabbage|coriander|cilantro|mint|basil|parsley|curry leaf|curry leaves|methi/,'🥬'],[/cucumber|zucchini|courgette/,'🥒'],[/eggplant|brinjal|aubergine|baingan/,'🍆'],[/corn/,'🌽'],[/mushroom/,'🍄'],[/peas|bean|lentil|\bdal\b|chana|rajma|chickpea|moong|toor|urad/,'🫘'],[/rice|poha/,'🍚'],[/atta|flour|maida|besan|semolina|rava|bread|roti|naan/,'🌾'],[/pasta|noodle|spaghetti/,'🍝'],[/milk|cream/,'🥛'],[/curd|yogh?urt|dahi/,'🥣'],[/paneer|cheese/,'🧀'],[/butter|ghee/,'🧈'],[/\beggs?\b/,'🥚'],[/chicken|turkey/,'🍗'],[/beef|mutton|lamb|pork|meat|bacon/,'🥩'],[/fish|salmon|tuna|prawn|shrimp/,'🐟'],[/\boil\b/,'🫒'],[/sugar|jaggery|honey/,'🍯'],[/\bsalt\b/,'🧂'],[/lemon|lime/,'🍋'],[/apple/,'🍎'],[/banana/,'🍌'],[/mango/,'🥭'],[/coconut/,'🥥'],[/nut|almond|cashew|peanut|walnut/,'🥜'],[/\btea\b|coffee/,'☕'],[/cumin|jeera|turmeric|haldi|masala|spice|cardamom|cinnamon|clove|mustard|pepper|powder|seed/,'🌶️']];
+const emojiFor=n=>{n=String(n).toLowerCase();for(const [r,e] of EMO)if(r.test(n))return e;return '🥘'};
+// A little confetti of ingredients, for happy moments.
+function burst(el){
+  if(reduce||!el)return;
+  const r=el.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,list=['🍅','🌿','✨','🧅','🥕','⭐','🍅','✨','🌿','🥕'];
+  list.forEach((e,i)=>{const s=document.createElement('span'),a=i/list.length*Math.PI*2,d=50+Math.random()*45;
+    s.className='bp';s.textContent=e;
+    s.style.cssText=`left:${x}px;top:${y}px;--dx:${Math.cos(a)*d}px;--dy:${Math.sin(a)*d-30}px;--r:${(Math.random()-.5)*180}deg`;
+    document.body.append(s);setTimeout(()=>s.remove(),950)});
+}
+const who=()=>cloud.username()||localStorage.getItem('prepd_username')||'';
+const SEED=Math.floor(Math.random()*1000);   // a different greeting each time the app opens
+// The friendly card at the top of the home screen.
+function helloCard(todayPlans,groceryN,eaten,planned){
+  const h=new Date().getHours(),meal=h<11?'breakfast':h<16?'lunch':'dinner',done=new Set(todayPlans.map(p=>p.slot));
+  const qs=[`What’s for ${meal} today?`,'Anything tasty on the menu?','Ready to prep something delicious?','Hungry yet? Let’s plan it.','Craving something new today?',`How about a ${meal} you’ll love?`,'What are we cooking next?','Your kitchen is ready when you are.'];
+  const line=done.size>=3?['Today’s fully planned. Nicely done! 🎉','Breakfast, lunch and dinner sorted. Chef’s kiss 👌'][SEED%2]:groceryN>=4?`Your grocery list has ${groceryN} items. Shopping day? 🛒`:qs[SEED%qs.length];
+  const next=!done.has(meal)?meal:SLOTS.map(s=>s[0]).find(k=>!done.has(k));
+  const chips=[next?`<button class="cp" data-chipadd="${next}">${SLOTS.find(s=>s[0]===next)[3]} Plan ${next}</button>`:'',
+    `<button class="cp" data-go="pantry">🧺 Pantry</button>`,`<button class="cp" data-go="grocery">🛒 Grocery${groceryN?` (${groceryN})`:''}</button>`,
+    cloud.enabled&&!cloud.signedIn()?`<button class="cp" data-acct="1">☁️ Back up my data</button>`:''].join('');
+  const pct=planned?Math.min(100,Math.round(eaten/planned*100)):0;
+  return `<div class="hello"><div class="hi">Hey ${esc(who()||'there')}! <span class="wave">👋</span></div><div class="hq">${line}</div>${planned?`<div class="dayb"><div class="dl"><span>${eaten.toLocaleString()} eaten</span><span>${planned.toLocaleString()} kcal planned today</span></div><div class="bt"><div class="bf" style="width:${pct}%"></div></div></div>`:''}<div class="chips">${chips}</div></div>`;
+}
 function toast(t){const e=document.createElement('div');e.className='toast';e.textContent=t;document.body.append(e);requestAnimationFrame(()=>requestAnimationFrame(()=>e.classList.add('on')));setTimeout(()=>{e.classList.remove('on');setTimeout(()=>e.remove(),400)},2600)}
 const head=(t,s='')=>{$('#t').textContent=t;$('#s').textContent=s};
 
@@ -48,7 +73,10 @@ async function renderPlan(dx=0){
   const dayPlans=plans.filter(p=>p.date===sel&&recs.has(p.recipeId));
   const total=dayPlans.reduce((a,p)=>a+kcal(recs.get(p.recipeId),planScale(p,recs.get(p.recipeId))),0);
   head(sel===today()?'Today':fmt(sel,{weekday:'long'}),fmt(sel,{day:'numeric',month:'long'})+(total?` · ${total.toLocaleString()} kcal planned`:''));
-  m.innerHTML=`<div class="wk"><button class="n" data-wk="-7" aria-label="Previous week">‹</button>${days.map(d=>`<button class="d ${d===sel?'sel':''} ${d===today()?'t':''}" data-d="${d}"><span>${fmt(d,{weekday:'short'})}</span><b>${+d.slice(8)}</b><i class="${plans.some(p=>p.date===d)?'on':''}"></i></button>`).join('')}<button class="n" data-wk="7" aria-label="Next week">›</button></div><div id="body">${SLOTS.map(([k,l,c,em])=>{
+  const tp=(await db.mealPlans.where('date').equals(today()).toArray()).filter(p=>recs.has(p.recipeId)),gN=await db.groceryList.count();
+  const kc=a=>a.reduce((n,p)=>n+kcal(recs.get(p.recipeId),planScale(p,recs.get(p.recipeId))),0);
+  const hello=helloCard(tp,gN,kc(tp.filter(p=>p.logged)),kc(tp));
+  m.innerHTML=hello+`<div class="wk"><button class="n" data-wk="-7" aria-label="Previous week">‹</button>${days.map(d=>`<button class="d ${d===sel?'sel':''} ${d===today()?'t':''}" data-d="${d}"><span>${fmt(d,{weekday:'short'})}</span><b>${+d.slice(8)}</b><i class="${plans.some(p=>p.date===d)?'on':''}"></i></button>`).join('')}<button class="n" data-wk="7" aria-label="Next week">›</button></div><div id="body">${SLOTS.map(([k,l,c,em])=>{
     const ps=dayPlans.filter(x=>x.slot===k);
     return ps.map(p=>{const r=recs.get(p.recipeId);
       return `<button class="slot" style="--c:var(${c})" data-meal="${p.id}"><span class="em">${em}</span><div class="t"><div class="l">${l}</div><div class="nm">${esc(r.name)}</div><div class="l">${kcal(r,planScale(p,r))} kcal</div></div>${p.logged?'<span class="ok">✓ Eaten</span>':''}</button>`}).join('')+
@@ -56,7 +84,10 @@ async function renderPlan(dx=0){
     :`<button class="slot e" style="--c:var(${c})" data-add="${k}"><span class="em">${em}</span><div class="t"><div class="l">${l}</div><div class="nm">What’s cooking?</div></div><span class="plus">+</span></button>`)}).join('')}</div>`;
   if(dx)pop($('#body'),dx*24);
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
-    if(d.wk){sel=addDays(sel,+d.wk);renderPlan(+d.wk>0?1:-1)}
+    if(d.go){tab=d.go;scrollTo(0,0);m.classList.add('stagger');setTimeout(()=>m.classList.remove('stagger'),900);render()}
+    else if(d.chipadd){sel=today();addSheet(d.chipadd)}
+    else if(d.acct)authSheet('signup',{done:()=>render()})
+    else if(d.wk){sel=addDays(sel,+d.wk);renderPlan(+d.wk>0?1:-1)}
     else if(d.d){const dir=d.d>sel?1:d.d<sel?-1:0;sel=d.d;renderPlan(dir)}
     else if(d.add)addSheet(d.add);else if(d.meal)mealSheet(+d.meal)};
 }
@@ -76,15 +107,15 @@ async function addSheet(slot){
   const label=SLOTS.find(s=>s[0]===slot)[1].toLowerCase(),saved=await db.recipes.toArray();
   const sh=sheet(`<h3>Add ${label}</h3><input id="nm" placeholder="Meal name, e.g. Paneer butter masala" autocomplete="off"><button class="g" id="find" style="width:100%;margin-bottom:.8rem">🔎 Find recipe online</button><textarea id="tx" placeholder="…or paste ingredients, one per line&#10;2 eggs&#10;a splash of milk"></textarea><details class="fold" style="margin:.2rem 0 .8rem"><summary>Steps <span class="s" style="font-weight:500">optional</span></summary><textarea id="stx" placeholder="One step per line, e.g.&#10;Heat oil and add cumin.&#10;Simmer for 10 minutes." style="min-height:7rem"></textarea></details><div class="f" style="align-items:center"><span>This dish serves</span><input id="sr" type="number" min="1" step="1" value="1" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="pp" type="number" min="0.5" step="0.5" value="1" style="margin:0"></div><div class="err" id="er"></div><button id="go" style="width:100%">Add meal</button>${saved.length?`<h4>Saved meals</h4>${saved.map(r=>`<div class="row" data-row="${r.id}"><button class="r" data-r="${r.id}" style="flex:1;text-align:left;color:var(--ink);padding:0"><b>${esc(r.name)}</b><div class="s">${kcal(r)} kcal · tap to add</div></button><button class="r" data-del="${r.id}" style="padding:.4rem .6rem">Delete</button></div>`).join('')}`:''}`);
   const body=sh.q('.sb'),mainHTML=body.innerHTML;let rv,stash={};
-  const draw=()=>{body.innerHTML=`<h3>Check ingredients</h3><div style="color:var(--mute);font-size:.88rem;margin-bottom:.7rem">From ${rv.url?`<a href="${esc(rv.url)}" target="_blank" rel="noopener" style="color:var(--acc)">${esc(new URL(rv.url).hostname.replace('www.',''))}</a>`:'the Prepd community'} · whole recipe${rv.steps?.length?` · ${rv.steps.length} steps found`:''}. Fix anything that looks off; Prepd learns from your fixes.</div><input id="nm" value="${esc(rv.name)}"><div class="f" style="align-items:center"><span>This dish serves</span><input id="yd" type="number" min="1" step="1" value="${rv.yield}" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="mk" type="number" min="0.25" step="0.25" value="${rv.making}" style="margin:0"></div>${rv.items.map((i,k)=>`<div class="row rvr"><div class="t"><input class="ni" data-k="${k}" value="${esc(i.name)}" aria-label="Ingredient name"><div class="s" style="margin-bottom:.4rem">${esc(i.display||'')}</div><div class="f"><input class="qi" data-k="${k}" type="number" step="any" inputmode="decimal" value="${q1(i.qty)}" aria-label="Amount">${unitSel('',i.unit,`class="ui" data-k="${k}" aria-label="Unit"`)}</div></div><button class="r" data-rm="${k}" aria-label="Remove">✕</button></div>`).join('')}<div class="err" id="er"></div><button id="ok" style="width:100%">Add meal</button><button class="g" id="back" style="width:100%;margin-top:.5rem">Back</button>`};
+  const draw=()=>{body.innerHTML=`<h3>Check ingredients</h3><div style="color:var(--mute);font-size:.88rem;margin-bottom:.7rem">From ${rv.url?`<a href="${esc(rv.url)}" target="_blank" rel="noopener" style="color:var(--acc)">${esc(new URL(rv.url).hostname.replace('www.',''))}</a>`:'the Prepd community'} · whole recipe${rv.steps?.length?` · ${rv.steps.length} steps found`:''}. Fix anything that looks off; Prepd learns from your fixes.</div><input id="nm" value="${esc(rv.name)}"><div class="f" style="align-items:center"><span>This dish serves</span><input id="yd" type="number" min="1" step="1" value="${rv.yield}" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="mk" type="number" min="0.25" step="0.25" value="${rv.making}" style="margin:0"></div>${rv.items.map((i,k)=>`<div class="row rvr"><div class="t"><input class="ni${i.suspect?' warnb':''}" data-k="${k}" value="${esc(i.name)}" aria-label="Ingredient name">${i.suspect?'<div class="sus">⚠ This might be wrong. Please check the name.</div>':''}<div class="s" style="margin-bottom:.4rem">${esc(i.display||'')}</div><div class="f"><input class="qi" data-k="${k}" type="number" step="any" inputmode="decimal" value="${q1(i.qty)}" aria-label="Amount">${unitSel('',i.unit,`class="ui" data-k="${k}" aria-label="Unit"`)}</div></div><button class="r" data-rm="${k}" aria-label="Remove">✕</button></div>`).join('')}<div class="err" id="er"></div><button id="ok" style="width:100%">Add meal</button><button class="g" id="back" style="width:100%;margin-top:.5rem">Back</button>`};
   sh.el.oninput=e=>{if(rv&&e.target.id==='nm')rv.name=e.target.value};
   sh.el.onchange=e=>{if(!rv)return;const t=e.target;
     if(t.id==='mk')rv.making=Math.max(.25,+t.value||1);
     if(t.id==='yd')rv.yield=Math.max(1,Math.round(+t.value)||1);
     if(t.classList.contains('qi'))rv.items[+t.dataset.k].qty=Math.max(0,+t.value||0);
     if(t.classList.contains('ui'))rv.items[+t.dataset.k].unit=t.value;
-    if(t.classList.contains('ni')){const it=rv.items[+t.dataset.k];it.name=t.value.trim()||it.name;t.value=it.name}};
-  const finish=async(name,text,ingredients,sourceUrl,servings=1,portions=1,share=true,steps=[])=>{const id=await db.recipes.add({name,text,ingredients,sourceUrl,servings,steps});
+    if(t.classList.contains('ni')){const it=rv.items[+t.dataset.k];it.name=t.value.trim()||it.name;t.value=it.name;it.suspect=false;t.classList.remove('warnb');t.parentElement.querySelector('.sus')?.remove()}};
+  const finish=async(name,text,ingredients,sourceUrl,servings=1,portions=1,share=true,steps=[])=>{ingredients=ingredients.map(({orig,suspect,learned,...i})=>i);const id=await db.recipes.add({name,text,ingredients,sourceUrl,servings,steps});
     const on=share&&await shareOn();learn(ingredients,on);if(on)cloud.shareRecipe(name,ingredients,servings,sourceUrl,steps);sh.close();plan(slot,id,portions)};
   sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const er=sh.q('#er');
     if(b.dataset.r){const pp=Math.max(.25,+sh.q('#pp')?.value||1);sh.close();plan(slot,+b.dataset.r,pp)}
@@ -92,7 +123,7 @@ async function addSheet(slot){
     if(b.id==='find'){const name=sh.q('#nm').value.trim();er.textContent='';
       if(!name)return sh.q('#nm').focus(),er.textContent='Type the meal name first.';
       try{const c=await cloud.findCommunity(name);
-        if(c){stash={nm:name,tx:sh.q('#tx').value};rv={name,url:'',yield:c.yield,making:1,items:c.items,community:true,removed:[],steps:c.steps||[]};draw()}
+        if(c){stash={nm:name,tx:sh.q('#tx').value};rv={name,url:'',yield:c.yield,making:1,items:c.items,community:true,communityId:c.id,removed:[],steps:c.steps||[]};draw()}
         else{const f=await findRecipe(name,t=>busy(b,1,t));busy(b,1,'Checking ingredients…');
           const items=await parseIngredients(f.lines.join('\n'));
           stash={nm:name,tx:sh.q('#tx').value};rv={name,url:f.url,yield:f.yield,making:1,removed:[],steps:f.steps||[],items:items.map(i=>({...i,orig:{name:i.name,qty:i.qty,unit:i.unit}}))};draw()}}
@@ -102,6 +133,7 @@ async function addSheet(slot){
     if(b.id==='ok'){const items=rv.items.map(i=>({...i})).filter(i=>i.qty>0);
       const name=rv.name.trim();if(!name)return er.textContent='Give your meal a name.';
       if(!items.length)return er.textContent='Keep at least one ingredient.';
+      if(rv.community&&rv.communityId)cloud.useRecipe(rv.communityId);
       if(!rv.community)await learnCorr(items,rv.removed||[]);   // remember the user's fixes
       finish(name,items.map(i=>`${q1(i.qty)} ${i.unit} ${i.name}`).join('\n'),items.map(({orig,...i})=>i),rv.url,rv.yield,rv.making,!rv.community,rv.steps||[])}
     if(b.id==='go'){const name=sh.q('#nm').value.trim(),text=sh.q('#tx').value.trim();er.textContent='';
@@ -148,7 +180,7 @@ async function mealSheet(id){
     if(b.id==='cook')stepsSheet(r,steps0);
     if(b.id==='rm'){await db.mealPlans.delete(id);await sync();sh.close();render()}
     if(b.id==='dm'&&await confirmDel(b)){await delRecipe(r.id);await sync();sh.close();toast('Meal deleted');render()}
-    if(b.id==='eat'){await sync();const {missing}=await deductIngredientsFromPantry(r.id,planScale(p,r));await db.mealPlans.update(id,{logged:1});await sync();sh.close();toast(missing.length?`Logged. Pantry was short on ${missing[0].name}`:'Logged. Pantry updated');render()}
+    if(b.id==='eat'){await sync();const {missing}=await deductIngredientsFromPantry(r.id,planScale(p,r));await db.mealPlans.update(id,{logged:1});await sync();burst(b);sh.close();toast(missing.length?`Logged. Pantry was short on ${missing[0].name}`:'Logged. Pantry updated 🎉');render()}
     if(b.id==='sv'){const name=sh.q('#nm').value.trim(),text=sh.q('#tx').value.trim(),er=sh.q('#er');
       if(!name||!text)return er.textContent='Name and ingredients can’t be empty.';
       busy(b,1,'Saving…');
@@ -159,7 +191,7 @@ async function mealSheet(id){
 }
 async function renderPantry(){
   const it=await db.pantryItems.toArray();head('Pantry',it.length?`${it.length} item${it.length>1?'s':''}`:'');
-  m.innerHTML=it.length?it.map(i=>{const p=i.capacity?Math.min(1,i.qty/i.capacity):1;return `<button class="row" data-i="${i.id}"><div class="t"><b>${esc(i.name)}</b> <span class="s">${convertMetricToFractionalUI(i.qty,i.capacity)} · ${amt(i)}</span><div class="bt"><div class="bf ${p<.2?'low':''}" style="width:${p*100}%"></div></div></div></button>`}).join('')
+  m.innerHTML=it.length?it.map(i=>{const p=i.capacity?Math.min(1,i.qty/i.capacity):1;return `<button class="row" data-i="${i.id}"><span class="em sm">${emojiFor(i.name)}</span><div class="t"><b>${esc(i.name)}</b> <span class="s">${convertMetricToFractionalUI(i.qty,i.capacity)} · ${amt(i)}</span><div class="bt"><div class="bf ${p<.2?'low':''}" style="width:${p*100}%"></div></div></div></button>`}).join('')
    :'<div class="empty" data-e="🧺"><b>Your pantry is empty</b>Add what you have, or tick off groceries to stock it.</div>';
   m.innerHTML+='<button class="fab" data-new aria-label="Add item">+</button>';
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
@@ -171,7 +203,11 @@ function itemSheet(it){
     if(b.id==='rm'){await db.pantryItems.delete(it.id);await sync();sh.close();render()}
     if(b.id==='sv'){const name=sh.q('#nm').value.trim(),qty=+sh.q('#q').value,unit=sh.q('#u').value;
       if(!name||!(qty>0)||!UNITS.includes(unit))return sh.q('#er').textContent='Enter a name, an amount, and unit g, ml, pcs, tsp, tbsp or cup.';
-      it?await db.pantryItems.update(it.id,{name,qty,unit,capacity:Math.max(it.capacity||0,qty)}):await db.pantryItems.add({name,qty,unit,capacity:qty});
+      // The bar compares the amount with the most you've had (capacity). Both must use the same unit, so when the unit
+      // changes (4900 g -> 4.9 kg) the capacity is converted too; otherwise the bar would read as empty.
+      let capacity=qty;
+      if(it){let cap=it.capacity||0;if(it.unit!==unit&&cap)cap=convertAmount(cap,it.unit,unit,name);capacity=Math.max(cap,qty)}
+      it?await db.pantryItems.update(it.id,{name,qty,unit,capacity}):await db.pantryItems.add({name,qty,unit,capacity});
       await sync();sh.close();render()}};
 }
 const amt=i=>['g','ml','pcs'].includes(i.unit)?sizeText(i.qty,i.unit):`${q1(i.qty)} ${i.unit}`;
@@ -196,71 +232,135 @@ function packSheet(name){
 }
 let packsOpen=false;
 async function renderSettings(){
-  head('Settings','Pack sizes, staples and your data');
+  head('Settings','Account, pack sizes and staples');
   const [rs,pi,gl,sv,sh0]=await Promise.all([db.recipes.toArray(),db.pantryItems.toArray(),db.groceryList.toArray(),db.appSettings.get('staples'),shareOn()]);
   const staples=sv?.value||[],seen=new Map();
   for(const i of [...rs.flatMap(r=>r.ingredients),...pi,...gl]){const n=(i.name||'').toLowerCase();if(n&&!seen.has(n))seen.set(n,i.unit||'g')}
   const names=[...seen.keys()].filter(n=>!isStaple({name:n})).sort(),note=t=>`<div style="color:var(--mute);font-size:.88rem;margin:.1rem 0 .6rem">${t}</div>`;
-  const state=!cloud.enabled?'Cloud backup is not set up. Your data is saved on this device only.':cloud.isReady()?`Backed up automatically · Support ID <b>${cloud.supportId()}</b>`:`Not connected to the cloud. Changes are saved on this device and sync once it connects.${cloud.getError()?` <span style="color:var(--warn)">Reason: ${esc(cloud.getError())}</span>`:''}`;
+  const acct=!cloud.enabled?'<div class="acct"><div class="av">💾</div><div class="t"><b>Backup isn’t set up</b><div class="s">Your data is saved on this device only.</div></div></div>'
+    :cloud.signedIn()?`<div class="acct"><div class="av">${esc((who()[0]||'?').toUpperCase())}</div><div class="t"><b>@${esc(who())}</b><div class="s">Backed up automatically ☁️</div></div></div><div class="f"><button class="g" id="so">Sign out</button><button class="r" id="da">Delete account</button></div>`
+    :`<div class="acct"><div class="av">☁️</div><div class="t"><b>You’re not signed in</b><div class="s">${cloud.getError()?`<span style="color:var(--warn)">${esc(cloud.getError())}</span>`:'Create an account to back up your data and use it on other devices.'}</div></div></div><div class="f"><button id="su">Create account</button><button class="g" id="si">Sign in</button></div>${cloud.getError()?'<button class="g" id="retry" style="width:100%;margin-top:.5rem">Retry connection</button>':''}`;
   m.innerHTML=`<details class="fold" id="pk" ${packsOpen?'open':''}><summary>Pack sizes <span class="s" style="font-weight:500">${names.length} item${names.length===1?'':'s'}</span></summary>${note('Grocery lists round up to whole packs. Tap an item to set the size you buy.')}`+
    (names.length?names.map(n=>{const p=pkgFor({name:n,unit:seen.get(n)});
      return `<button class="row" data-p="${esc(n)}"><div class="t"><b>${esc(n)}</b><div class="s">${p?`1 ${esc(p.n)} = ${sizeText(p.size,p.unit)}${p.custom?' · yours':''}`:'Bought by count · tap to set a pack'}</div></div><span style="color:var(--mute)">›</span></button>`}).join('')
     :'<div class="empty" data-e="🧺"><b>No ingredients yet</b>Add a meal and its ingredients show up here.</div>')+
    `<button class="g" data-p="" style="width:100%;margin:.2rem 0 .8rem">+ Other item</button></details><h4>Always-available staples</h4>${note('Never added to Grocery or taken from the pantry. Separate several with commas.')}<div><span class="chip">water</span><span class="chip">ice</span>${staples.map(x=>`<span class="chip">${esc(x)}<button data-rs="${esc(x)}" aria-label="Remove ${esc(x)}">✕</button></span>`).join('')}</div><div class="f" style="margin:.4rem 0 1rem"><input id="st" placeholder="e.g. salt, cooking oil" style="margin:0"><button id="addst" style="flex:none">Add</button></div>
-   <h4>Your data</h4>${note(state)}<div class="f"><button class="g" id="send">Send data to new device</button><button class="g" id="join">Enter a code</button></div>${cloud.enabled&&!cloud.isReady()?'<button class="g" id="retry" style="width:100%;margin-top:.5rem">Retry connection</button>':''}
+   <h4>Account</h4>${acct}
    <label class="tog"><div><b>Share recipes anonymously</b><div class="s">Helps everyone get more accurate ingredients. Never includes your name or pantry.</div></div><input type="checkbox" id="shr" ${sh0?'checked':''}></label>`;
   $('#pk').ontoggle=e=>{packsOpen=e.target.open};
   $('#shr').onchange=e=>saveSet('cloud_share',e.target.checked);
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
     if('p'in d)packSheet(d.p);
     if(b.id==='retry'){busy(b,1,'Connecting…');await cloud.init();render()}
-    if(b.id==='send')sendSheet();if(b.id==='join')joinSheet(false);
+    if(b.id==='su')authSheet('signup',{done:()=>render()});
+    if(b.id==='si')authSheet('signin');
+    if(b.id==='so'){await cloud.signOut();toast('Signed out. Your data stays on this device.');render()}
+    if(b.id==='da')deleteFlow();
     if(d.rs){await saveSet('staples',staples.filter(x=>x!==d.rs));await loadPrefs();await sync();render()}
     if(b.id==='addst'){const add=$('#st').value.split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);if(!add.length)return;
       await saveSet('staples',[...new Set([...staples,...add])]);await loadPrefs();
       const gl2=await db.groceryList.toArray();await db.groceryList.bulkDelete(gl2.filter(g=>add.includes(g.name.toLowerCase())).map(g=>g.id));await sync();render()}};
 }
-// Old device: shows a one-time code (valid 10 minutes). The latest data is uploaded first.
-async function sendSheet(){
-  const sh=sheet(`<h3>Send data to new device</h3><div class="code" id="cd"><span class="sp" style="border-color:var(--acc);border-right-color:transparent"></span></div><div class="err" id="er"></div><div style="color:var(--mute);font-size:.92rem">On the new device, open Prepd and choose <b>I already use Prepd on another device</b>, then enter this code. It works once and expires in 10 minutes.</div>`);
-  try{
-    if(!cloud.enabled)throw new Error('Cloud backup is not set up yet.');
-    if(!await cloud.init())throw new Error('You’re offline. Connect to the internet and try again.');
-    await cloud.push(await exportUserData());
-    const c=await cloud.createCode();sh.q('#cd').textContent=c.replace(/(\d{3})(\d{3})/,'$1 $2');
-  }catch(e){sh.q('#cd').textContent='—';sh.q('#er').textContent=e.message}
+// Create account / sign in (used by Settings, the home card and the welcome screen).
+function authSheet(mode='signup',opts={}){
+  let md=mode;
+  const html=()=>`<h3>${md==='signup'?'Create your account':'Welcome back'}</h3><div style="color:var(--mute);font-size:.92rem;margin:-.4rem 0 .9rem">${md==='signup'?'Pick a username and password. Your data backs up automatically.':'Sign in to bring your data to this device.'}</div><input id="un" placeholder="Username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="20"><div class="uh" id="uh"></div><input id="pw" type="password" placeholder="Password${md==='signup'?' (8+ characters)':''}" autocomplete="${md==='signup'?'new-password':'current-password'}"><div class="err" id="er"></div>${md==='signin'&&!opts.fresh?'<div style="color:var(--mute);font-size:.86rem;margin-bottom:.8rem">This replaces the data on this device with your account’s data.</div>':''}<button id="go" style="width:100%">${md==='signup'?'Create account':'Sign in'}</button><button class="r" id="sw" style="width:100%;margin-top:.4rem;color:var(--acc)">${md==='signup'?'I already have an account':'Create a new account'}</button>`;
+  const sh=sheet(html());let t;
+  sh.el.oninput=e=>{
+    if(e.target.id!=='un'||md!=='signup')return;
+    clearTimeout(t);const v=e.target.value.trim(),uh=sh.q('#uh');
+    if(!v){uh.textContent='';return}
+    if(!/^[A-Za-z0-9_]{3,20}$/.test(v)){uh.textContent='3–20 letters, numbers or underscores';uh.className='uh bad';return}
+    uh.textContent='Checking…';uh.className='uh';
+    t=setTimeout(async()=>{const f=await cloud.usernameFree(v);if(sh.q('#un')?.value.trim()!==v)return;
+      uh.textContent=f===null?'':f?'✓ Available':'✗ Already taken';uh.className='uh '+(f===null?'':f?'ok':'bad')},350);
+  };
+  sh.el.onclick=async e=>{
+    const b=e.target.closest('button');if(!b)return;
+    if(b.id==='sw'){md=md==='signup'?'signin':'signup';sh.q('.sb').innerHTML=html();return}
+    if(b.id!=='go')return;
+    const u=sh.q('#un').value.trim(),p=sh.q('#pw').value,er=sh.q('#er');er.textContent='';
+    if(!u||!p)return er.textContent='Enter a username and password.';
+    busy(b,1,md==='signup'?'Creating…':'Signing in…');
+    try{
+      let restored=false;
+      if(md==='signup'){await cloud.signUp(u,p);await cloud.push(await exportUserData());toast(`Welcome, ${cloud.username()}! 🎉`)}
+      else{
+        await cloud.signIn(u,p);const r=await cloud.pull();
+        if(r?.data){await importUserData(r.data);localStorage.setItem('prepd_pushed',String(Date.parse(r.updated_at)));restored=true;toast('Welcome back! Data restored')}
+        else await cloud.push(await exportUserData());
+      }
+      await db.appSettings.put({key:'onboarded',value:true});localStorage.setItem('prepd_onboarded','1');
+      sh.close();
+      if(opts.done)opts.done(md,restored);else if(restored)setTimeout(()=>location.reload(),500);else render();
+    }catch(x){er.textContent=x.message;busy(b,0,md==='signup'?'Create account':'Sign in')}
+  };
 }
-// New device: enter the code, this device joins the account and the data is restored.
-function joinSheet(fresh,done){
-  const sh=sheet(`<h3>Enter your code</h3><input id="cc" inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" style="font-size:1.6rem;text-align:center;letter-spacing:.2em"><div class="err" id="er"></div>${fresh?'':'<div style="color:var(--mute);font-size:.88rem;margin-bottom:.8rem">This replaces the data on this device with the data linked to the code.</div>'}<button id="go" style="width:100%">Restore my data</button>`);
-  sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b||b.id!=='go')return;
-    const c=sh.q('#cc').value.trim();if(!c)return sh.q('#er').textContent='Enter the code.';
+// Delete account: password first, then a second "are you sure".
+async function deleteFlow(){
+  const c=await cloud.sharedCounts();
+  const sh=sheet(`<h3>Delete account</h3><div style="color:var(--mute);font-size:.92rem;margin:-.4rem 0 .9rem">This permanently deletes <b>@${esc(who())}</b> and its cloud backup. The data on this device stays.</div><input id="dp" type="password" placeholder="Confirm your password" autocomplete="current-password">${c.total?`<label class="tog"><div><b>Also delete my shared recipes</b><div class="s">Removes the ${c.unused} of your ${c.total} shared recipe${c.total>1?'s':''} that nobody else has saved. The others stay, with your name removed.</div></div><input type="checkbox" id="ds"></label>`:''}<div class="err" id="er"></div><button class="danger" id="d1" style="width:100%">Continue</button>`);
+  sh.el.onclick=async e=>{
+    const b=e.target.closest('button');if(!b||b.id!=='d1')return;
+    const pw=sh.q('#dp').value,er=sh.q('#er'),flag=!!sh.q('#ds')?.checked;er.textContent='';
+    if(!pw)return er.textContent='Enter your password.';
     busy(b,1,'Checking…');
-    try{await cloud.redeem(c,importUserData);await db.appSettings.put({key:'onboarded',value:true});localStorage.setItem('prepd_onboarded','1');
-      toast('Welcome back! Data restored');setTimeout(()=>location.reload(),600)}
-    catch(x){sh.q('#er').textContent=x.message;busy(b,0,'Restore my data')}};
+    try{await cloud.verifyPassword(pw)}catch(x){er.textContent=x.message;return busy(b,0,'Continue')}
+    sh.close();
+    setTimeout(()=>{
+      const s2=sheet(`<h3>Are you absolutely sure?</h3><div style="color:var(--mute);font-size:.92rem;margin:-.4rem 0 .9rem">This can’t be undone. Type <b>DELETE</b> to confirm.</div><input id="cf" placeholder="DELETE" autocapitalize="characters" autocomplete="off"><div class="err" id="er"></div><button class="danger" id="d2" style="width:100%">Permanently delete account</button><button class="g" id="no" style="width:100%;margin-top:.5rem">Keep my account</button>`);
+      s2.el.onclick=async ev=>{
+        const x=ev.target.closest('button');if(!x)return;
+        if(x.id==='no')return s2.close();
+        if(x.id!=='d2')return;
+        if(s2.q('#cf').value.trim()!=='DELETE')return s2.q('#er').textContent='Type DELETE to confirm.';
+        busy(x,1,'Deleting…');
+        try{await cloud.deleteAccount(pw,flag);s2.close();toast('Account deleted');render()}
+        catch(err){s2.q('#er').textContent=err.message;busy(x,0,'Permanently delete account')}
+      };
+    },420);
+  };
 }
-// First launch: a short, friendly tour. Resolves when the user is ready.
+// First launch: a short, friendly tour with a back button and swipe. Resolves when the user is ready.
 function welcome(){
   return new Promise(res=>{
-    const slides=[['🗓️','Plan your week','Put breakfast, lunch and dinner on a calendar. Prepd does the maths.'],
+    const info=[['🗓️','Plan your week','Put breakfast, lunch and dinner on a calendar. Prepd does the maths.'],
       ['🧺','Your kitchen keeps count','Eat a meal and your pantry updates. Running low? It lands on your grocery list as whole packs.'],
-      ['☁️','Safe on any device',cloud.enabled?'Your data backs up automatically. Switching phones is one code away.':'Your data is saved on this device and backed up automatically.']];
+      ['⏱️','Cook with confidence','Follow recipe steps one by one, with timers built in so nothing burns.']];
+    const acct=cloud.enabled,total=info.length+(acct?1:0);
     const el=document.createElement('div');el.className='wel';
     el.innerHTML=`<div class="logo"><svg viewBox="0 0 32 32" width="34" height="34"><circle cx="16" cy="18" r="11" fill="#ff4d3d"/><path d="M16 8c-1-3-4-4-6-3 2 0 3 1 3 3-2 0-4 1-5 2 3-1 6 0 8-1 2 1 5 0 8 1-1-1-3-2-5-2 0-2 1-3 3-3-2-1-5 0-6 3z" fill="#2fb36b"/></svg>Prepd</div>
-    <div style="overflow:hidden"><div class="wtrack" id="wt">${slides.map(([e,t,p])=>`<div class="wslide"><div class="big">${e}</div><h2>${t}</h2><p>${p}</p></div>`).join('')}</div></div>
-    <div class="dots" id="wd">${slides.map(()=>'<i></i>').join('')}</div>
+    <div class="wclip" id="wc"><div class="wtrack" id="wt">${info.map(([e,t,p])=>`<div class="wslide"><div class="big">${e}</div><h2>${t}</h2><p>${p}</p></div>`).join('')}${acct?'<div class="wslide"><div class="big">☁️</div><h2>Make it yours</h2><p>Create an account to back up your data and use Prepd on any device. Or skip it and stay on this device.</p></div>':''}</div></div>
+    <div class="dots" id="wd">${Array.from({length:total},()=>'<i></i>').join('')}</div>
     <label class="tog" id="wshare" style="display:none"><div><b>Share recipes anonymously</b><div class="s">Helps everyone get more accurate ingredients. No personal info.</div></div><input type="checkbox" id="wsc" checked></label>
-    <button id="wn" style="width:100%;padding:.95rem;font-size:1.05rem">Next</button>
-    ${cloud.enabled?'<button class="r" id="wj" style="width:100%;margin-top:.4rem;color:var(--acc)">I already use Prepd on another device</button>':''}`;
+    <div class="wnav" id="wnav"><button class="g" id="wb">‹ Back</button><button id="wn">Next</button></div>
+    <div id="wact" style="display:none"><button id="wcr" style="width:100%;padding:.95rem;font-size:1.05rem">Create my account</button><button class="g" id="wj" style="width:100%;margin-top:.5rem">I already have an account</button><button class="r" id="ws" style="width:100%;margin-top:.2rem">Continue without an account</button></div>`;
     document.body.append(el);let i=0;
-    const draw=()=>{$('#wt',el).style.transform=`translateX(-${i*100}%)`;[...$('#wd',el).children].forEach((d,k)=>d.classList.toggle('on',k===i));
-      $('#wn',el).textContent=i===slides.length-1?'Get started':'Next';$('#wshare',el).style.display=i===slides.length-1?'flex':'none'};
-    const finish=async()=>{await db.appSettings.put({key:'onboarded',value:true});localStorage.setItem('prepd_onboarded','1');
-      await db.appSettings.put({key:'cloud_share',value:$('#wsc',el).checked});el.classList.add('out');setTimeout(()=>{el.remove();res()},400)};
+    const draw=()=>{
+      $('#wt',el).style.transform=`translateX(-${i*100}%)`;
+      [...$('#wd',el).children].forEach((d,k)=>d.classList.toggle('on',k===i));
+      const last=i===total-1,onAcct=acct&&last;
+      $('#wb',el).style.visibility=i?'visible':'hidden';
+      $('#wn',el).textContent=last?'Get started':'Next';
+      $('#wnav',el).style.display=onAcct?'none':'flex';
+      $('#wact',el).style.display=onAcct?'block':'none';
+      $('#wshare',el).style.display=last?'flex':'none';
+    };
+    const finish=async()=>{
+      await db.appSettings.put({key:'onboarded',value:true});localStorage.setItem('prepd_onboarded','1');
+      await db.appSettings.put({key:'cloud_share',value:$('#wsc',el).checked});
+      el.classList.add('out');setTimeout(()=>{el.remove();res()},400);
+    };
+    const go=n=>{i=Math.max(0,Math.min(total-1,n));draw()};
     el.onclick=e=>{const b=e.target.closest('button');if(!b)return;
-      if(b.id==='wn')i<slides.length-1?(i++,draw()):finish();
-      if(b.id==='wj')joinSheet(true)};
+      if(b.id==='wn')i<total-1?go(i+1):finish();
+      if(b.id==='wb')go(i-1);
+      if(b.id==='ws')finish();
+      if(b.id==='wcr')authSheet('signup',{done:()=>finish()});
+      if(b.id==='wj')authSheet('signin',{fresh:true,done:(md,restored)=>restored?location.reload():finish()})};
+    let x0=null;const clip=$('#wc',el);                       // swipe left / right
+    clip.onpointerdown=e=>{x0=e.clientX};
+    clip.onpointerup=e=>{if(x0==null)return;const dx=e.clientX-x0;x0=null;if(Math.abs(dx)>50)go(i+(dx<0?1:-1))};
     draw();
   });
 }
@@ -272,24 +372,34 @@ async function maybeWelcome(){
 }
 async function renderGrocery(){
   const g=await db.groceryList.toArray();head('Grocery',g.length?`${g.length} to buy`:'');
-  m.innerHTML=(g.length?g.map(i=>`<div class="row" data-row="${i.id}"><button class="chk" data-buy="${i.id}" aria-label="Mark ${esc(i.name)} bought"></button><div class="t"><b>${esc(groceryText(i).title)}</b><div class="s">${esc(groceryText(i).sub)}</div></div><button class="r" data-x="${i.id}" style="padding:.4rem">✕</button></div>`).join('')
+  m.innerHTML=(g.length?g.map(i=>`<div class="row" data-row="${i.id}"><button class="chk" data-buy="${i.id}" aria-label="Mark ${esc(i.name)} bought"></button><span class="em sm">${emojiFor(i.name)}</span><div class="t"><b>${esc(groceryText(i).title)}</b><div class="s">${esc(groceryText(i).sub)}</div></div><button class="r" data-x="${i.id}" style="padding:.4rem">✕</button></div>`).join('')
    :'<div class="empty" data-e="🛒"><b>Nothing to buy</b>Meals you plan add missing ingredients here.</div>')+'<button class="fab" data-new aria-label="Add item">+</button>';
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
-    if(d.buy||d.x){const row=$(`[data-row="${d.buy||d.x}"]`);if(d.buy){b.classList.add('on');b.textContent='✓';await new Promise(r=>setTimeout(r,250));await restockFromGrocery(+d.buy);toast('Moved to pantry')}else await db.groceryList.delete(+d.x);
+    if(d.buy||d.x){const row=$(`[data-row="${d.buy||d.x}"]`);if(d.buy){b.classList.add('on');b.textContent='✓';burst(b);await new Promise(r=>setTimeout(r,350));await restockFromGrocery(+d.buy);toast('Moved to pantry')}else await db.groceryList.delete(+d.x);
       row.classList.add('gone');setTimeout(render,300)}
     if('new'in d){const sh=sheet(`<h3>Add to list</h3><input id="nm" placeholder="Name"><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount">${unitSel('u','g')}</div><div class="err" id="er"></div><button id="sv" style="width:100%">Add to list</button>`);
       sh.el.onclick=async ev=>{if(ev.target.id!=='sv')return;const name=sh.q('#nm').value.trim(),qty=+sh.q('#q').value,unit=sh.q('#u').value;
         if(!name||!(qty>0)||!UNITS.includes(unit))return sh.q('#er').textContent='Enter a name, an amount, and unit g, ml, pcs, tsp, tbsp or cup.';
         await db.groceryList.add({name,qty,unit,checked:0});sh.close();render()}}};
 }
+// Earlier versions kept a stale capacity when a unit changed (4900 g -> 4.9 kg left capacity 4900), which made the bar
+// read as empty. Repair those items once.
+async function healPantry(){
+  for(const i of await db.pantryItems.toArray())
+    if((i.unit==='kg'||i.unit==='l')&&i.qty>0&&i.capacity>=200&&i.capacity/i.qty>=50)await db.pantryItems.update(i.id,{capacity:Math.max(i.qty,i.capacity/1000)});
+}
+const offline=()=>$('#ob').classList.toggle('on',!navigator.onLine);
+addEventListener('online',offline);addEventListener('offline',offline);
 async function render(){
   const n=await db.groceryList.count();
   $('#n').innerHTML=[['plan','Plan'],['pantry','Pantry'],['grocery','Grocery'],['settings','Settings']].map(([k,l])=>`<button data-t="${k}" class="${k===tab?'on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>${l}${k==='grocery'&&n?`<span class="bd">${n}</span>`:''}</button>`).join('');
   await({plan:renderPlan,pantry:renderPantry,grocery:renderGrocery,settings:renderSettings}[tab])();
 }
-$('#n').onclick=e=>{const t=e.target.closest('button')?.dataset.t;if(t&&t!==tab){tab=t;scrollTo(0,0);render().then(()=>pop(m))}};
+$('#n').onclick=e=>{const t=e.target.closest('button')?.dataset.t;if(t&&t!==tab){tab=t;scrollTo(0,0);m.classList.add('stagger');setTimeout(()=>m.classList.remove('stagger'),900);render().then(()=>pop(m))}};
+offline();
 (async()=>{
-  await requestPersistence();await autoRestore();await loadPrefs();await maybeWelcome();
+  await requestPersistence();await autoRestore();await loadPrefs();await maybeWelcome();await healPantry();
+  m.classList.add('stagger');setTimeout(()=>m.classList.remove('stagger'),900);
   setOnBackup(async snap=>{if(cloud.isReady())await cloud.push(snap)});
   await render();timers.resume();drawTimers();
   // Cloud: sign in this device, then upload unsynced edits or take a newer copy from another device.
