@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
 <meta name="theme-color" content="#ffffff">
 <meta name="description" content="Prepd plans your meals, tracks your pantry and builds your grocery list.">
 <meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-capable" content="yes">
@@ -69,6 +69,7 @@ select{appearance:none;-webkit-appearance:none;padding-right:2.2rem;cursor:point
 @keyframes wave{0%,60%,100%{transform:rotate(0)}10%,30%{transform:rotate(14deg)}20%,40%{transform:rotate(-8deg)}50%{transform:rotate(10deg)}}
 .hq{color:var(--mute);margin:.15rem 0 .8rem}
 .dayb{margin:-.1rem 0 .9rem}.dl{display:flex;justify-content:space-between;font-size:.8rem;color:var(--mute)}
+.alts{display:flex;flex-wrap:wrap;gap:.35rem;margin:0 0 .45rem}.alts .cp{padding:.3rem .7rem;font-size:.82rem}
 .chips{display:flex;flex-wrap:wrap;gap:.45rem}
 .cp{background:#fff;color:var(--acc);border:2px solid #ffd9d4;box-shadow:0 2px 0 #ffd9d4;padding:.45rem .85rem;border-radius:2rem;font-size:.88rem}
 .acct{display:flex;align-items:center;gap:.9rem;background:var(--card);border:2px solid var(--line);box-shadow:0 3px 0 var(--line);border-radius:1.4rem;padding:.9rem 1rem;margin-bottom:.7rem}
@@ -95,8 +96,9 @@ nav{position:fixed;inset:auto 0 0;z-index:6;display:flex;justify-content:center;
 nav button{flex:1;max-width:9rem;background:none;color:var(--mute);display:flex;flex-direction:column;align-items:center;gap:.15rem;font-size:.72rem;padding:.4rem;position:relative}nav button.on{color:var(--acc)}nav button.on svg{animation:hop .5s var(--bounce)}@keyframes hop{0%{transform:scale(.7) translateY(4px)}}nav svg{width:1.5rem;height:1.5rem}
 .bd{position:absolute;top:.1rem;left:calc(50% + .5rem);background:var(--warn);color:#fff;border-radius:1rem;font-size:.65rem;padding:0 .35rem;min-width:1.1rem}
 .scrim{position:fixed;inset:0;z-index:50;background:rgba(70,10,10,.3);opacity:0;transition:opacity .35s}.scrim.on{opacity:1}
-.sheet{position:fixed;left:0;right:0;bottom:0;margin:auto;max-width:36rem;max-height:88vh;z-index:51;background:var(--glass);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);border-radius:1.8rem 1.8rem 0 0;transform:translateY(105%);transition:transform .5s var(--sheet);box-shadow:0 -10px 40px rgba(120,20,15,.15);display:flex;flex-direction:column}.sheet.on{transform:none}
-.grab{padding:.7rem 0 .4rem;touch-action:none;cursor:grab}.grab i{display:block;width:2.6rem;height:.3rem;border-radius:1rem;background:#f0cfcc;margin:auto}
+.sheet{position:fixed;left:0;right:0;bottom:0;margin:auto;max-width:36rem;max-height:80vh;max-height:calc(100dvh - 5rem - env(safe-area-inset-top));z-index:51;background:var(--glass);backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);border-radius:1.8rem 1.8rem 0 0;transform:translateY(105%);transition:transform .5s var(--sheet);box-shadow:0 -10px 40px rgba(120,20,15,.15);display:flex;flex-direction:column}.sheet.on{transform:none}
+.grab{position:relative;padding:.7rem 0 .4rem;touch-action:none;cursor:grab}
+.grab .x{position:absolute;right:.8rem;top:.35rem;width:2.4rem;height:2.4rem;padding:0;border-radius:50%;background:var(--accT);color:var(--acc);box-shadow:none;font-size:1rem;display:grid;place-items:center}.grab i{display:block;width:2.6rem;height:.3rem;border-radius:1rem;background:#f0cfcc;margin:auto}
 .sb{overflow:auto;padding:0 1.2rem calc(1.4rem + env(safe-area-inset-bottom))}.f{display:flex;gap:.6rem}.f>*{flex:1}
 .err{color:var(--warn);font-size:.9rem;margin:.2rem 0 .6rem}.sp{display:inline-block;width:1em;height:1em;border:2px solid #fff;border-right-color:transparent;border-radius:50%;animation:rot .7s linear infinite;vertical-align:-.15em;margin-right:.4rem}@keyframes rot{to{transform:rotate(1turn)}}
 .toast{position:fixed;left:50%;bottom:calc(6rem + env(safe-area-inset-bottom));transform:translate(-50%,20px);background:var(--acc);color:#fff;font-weight:600;padding:.65rem 1.1rem;border-radius:2rem;z-index:60;opacity:0;transition:all .35s var(--ease);font-size:.92rem;max-width:90vw}.toast.on{opacity:1;transform:translate(-50%,0)}

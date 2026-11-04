@@ -1,5 +1,5 @@
 import {db,today,requestPersistence,autoRestore,setOnBackup,exportUserData,importUserData} from './db.js';
-import {parseIngredients} from './ingredientParser.js';
+import {parseIngredients,reprice} from './ingredientParser.js';
 import {findRecipe} from './recipeFinder.js';
 import * as cloud from './cloud.js';
 import {resolveUnits,learn,loadProfiles} from './units.js';
@@ -50,16 +50,20 @@ function toast(t){const e=document.createElement('div');e.className='toast';e.te
 const head=(t,s='')=>{$('#t').textContent=t;$('#s').textContent=s};
 
 // Bottom sheet: spring-like open, drag to dismiss with momentum projection
+// Sheets can be closed with the ✕ button, the Escape key, a swipe down, or a tap outside.
+const sheetStack=[];
+addEventListener('keydown',e=>{if(e.key==='Escape')sheetStack[sheetStack.length-1]?.close()});
 function sheet(html){
   const sc=document.createElement('div'),sh=document.createElement('div');sc.className='scrim';sh.className='sheet';
-  sh.innerHTML=`<div class="grab"><i></i></div><div class="sb">${html}</div>`;document.body.append(sc,sh);
+  sh.innerHTML=`<div class="grab"><i></i><button class="x" aria-label="Close">✕</button></div><div class="sb">${html}</div>`;document.body.append(sc,sh);
   requestAnimationFrame(()=>requestAnimationFrame(()=>{sc.classList.add('on');sh.classList.add('on')}));
-  const close=()=>{sc.classList.remove('on');sh.classList.remove('on');sh.style.transform='';setTimeout(()=>{sc.remove();sh.remove()},500)};
+  let api;const close=()=>{const i=sheetStack.indexOf(api);if(i>=0)sheetStack.splice(i,1);sc.classList.remove('on');sh.classList.remove('on');sh.style.transform='';setTimeout(()=>{sc.remove();sh.remove()},500)};
   sc.onclick=close;const g=$('.grab',sh);let y0,ly,lt,v=0,on=0;
-  g.onpointerdown=e=>{g.setPointerCapture(e.pointerId);on=1;y0=ly=e.clientY;lt=e.timeStamp;sh.style.transition='none'};
+  g.onpointerdown=e=>{if(e.target.closest('.x'))return;g.setPointerCapture(e.pointerId);on=1;y0=ly=e.clientY;lt=e.timeStamp;sh.style.transition='none'};
   g.onpointermove=e=>{if(!on)return;const dy=e.clientY-y0;v=(e.clientY-ly)/(e.timeStamp-lt||1);ly=e.clientY;lt=e.timeStamp;sh.style.transform=`translateY(${dy>0?dy:dy*.25}px)`};
   g.onpointerup=e=>{if(!on)return;on=0;sh.style.transition='';const dy=e.clientY-y0;(dy+v*99>140)?close():sh.style.transform=''};
-  return {el:sh,close,q:s=>$(s,sh)};
+  api={el:sh,close,q:s=>$(s,sh)};sheetStack.push(api);$('.x',sh).onclick=close;
+  return api;
 }
 const busy=(b,on,t)=>{b.disabled=on;b.innerHTML=on?`<span class="sp"></span>${t}`:t};
 
@@ -107,7 +111,7 @@ async function addSheet(slot){
   const label=SLOTS.find(s=>s[0]===slot)[1].toLowerCase(),saved=await db.recipes.toArray();
   const sh=sheet(`<h3>Add ${label}</h3><input id="nm" placeholder="Meal name, e.g. Paneer butter masala" autocomplete="off"><button class="g" id="find" style="width:100%;margin-bottom:.8rem">🔎 Find recipe online</button><textarea id="tx" placeholder="…or paste ingredients, one per line&#10;2 eggs&#10;a splash of milk"></textarea><details class="fold" style="margin:.2rem 0 .8rem"><summary>Steps <span class="s" style="font-weight:500">optional</span></summary><textarea id="stx" placeholder="One step per line, e.g.&#10;Heat oil and add cumin.&#10;Simmer for 10 minutes." style="min-height:7rem"></textarea></details><div class="f" style="align-items:center"><span>This dish serves</span><input id="sr" type="number" min="1" step="1" value="1" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="pp" type="number" min="0.5" step="0.5" value="1" style="margin:0"></div><div class="err" id="er"></div><button id="go" style="width:100%">Add meal</button>${saved.length?`<h4>Saved meals</h4>${saved.map(r=>`<div class="row" data-row="${r.id}"><button class="r" data-r="${r.id}" style="flex:1;text-align:left;color:var(--ink);padding:0"><b>${esc(r.name)}</b><div class="s">${kcal(r)} kcal · tap to add</div></button><button class="r" data-del="${r.id}" style="padding:.4rem .6rem">Delete</button></div>`).join('')}`:''}`);
   const body=sh.q('.sb'),mainHTML=body.innerHTML;let rv,stash={};
-  const draw=()=>{body.innerHTML=`<h3>Check ingredients</h3><div style="color:var(--mute);font-size:.88rem;margin-bottom:.7rem">From ${rv.url?`<a href="${esc(rv.url)}" target="_blank" rel="noopener" style="color:var(--acc)">${esc(new URL(rv.url).hostname.replace('www.',''))}</a>`:'the Prepd community'} · whole recipe${rv.steps?.length?` · ${rv.steps.length} steps found`:''}. Fix anything that looks off; Prepd learns from your fixes.</div><input id="nm" value="${esc(rv.name)}"><div class="f" style="align-items:center"><span>This dish serves</span><input id="yd" type="number" min="1" step="1" value="${rv.yield}" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="mk" type="number" min="0.25" step="0.25" value="${rv.making}" style="margin:0"></div>${rv.items.map((i,k)=>`<div class="row rvr"><div class="t"><input class="ni${i.suspect?' warnb':''}" data-k="${k}" value="${esc(i.name)}" aria-label="Ingredient name">${i.suspect?'<div class="sus">⚠ This might be wrong. Please check the name.</div>':''}<div class="s" style="margin-bottom:.4rem">${esc(i.display||'')}</div><div class="f"><input class="qi" data-k="${k}" type="number" step="any" inputmode="decimal" value="${q1(i.qty)}" aria-label="Amount">${unitSel('',i.unit,`class="ui" data-k="${k}" aria-label="Unit"`)}</div></div><button class="r" data-rm="${k}" aria-label="Remove">✕</button></div>`).join('')}<div class="err" id="er"></div><button id="ok" style="width:100%">Add meal</button><button class="g" id="back" style="width:100%;margin-top:.5rem">Back</button>`};
+  const draw=()=>{body.innerHTML=`<h3>Check ingredients</h3><div style="color:var(--mute);font-size:.88rem;margin-bottom:.7rem">From ${rv.url?`<a href="${esc(rv.url)}" target="_blank" rel="noopener" style="color:var(--acc)">${esc(new URL(rv.url).hostname.replace('www.',''))}</a>`:'the Prepd community'} · whole recipe${rv.steps?.length?` · ${rv.steps.length} steps found`:''}. Fix anything that looks off; Prepd learns from your fixes.</div><input id="nm" value="${esc(rv.name)}"><div class="f" style="align-items:center"><span>This dish serves</span><input id="yd" type="number" min="1" step="1" value="${rv.yield}" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="mk" type="number" min="0.25" step="0.25" value="${rv.making}" style="margin:0"></div>${rv.items.map((i,k)=>`<div class="row rvr"><div class="t"><input class="ni${i.suspect?' warnb':''}" data-k="${k}" value="${esc(i.name)}" aria-label="Ingredient name">${i.unknown?'<div class="sus">⚠ Not recognised, so calories aren’t counted. Check the name.</div>':i.suspect?'<div class="sus">⚠ This might be wrong. Please check the name.</div>':''}${i.alts?.length&&(i.suspect||i.unknown)?`<div class="alts">${i.alts.map(a=>`<button class="cp" data-alt="${k}|${esc(a)}">${esc(a)}</button>`).join('')}</div>`:''}<div class="s" style="margin-bottom:.4rem">${esc(i.display||'')}</div><div class="f"><input class="qi" data-k="${k}" type="number" step="any" inputmode="decimal" value="${q1(i.qty)}" aria-label="Amount">${unitSel('',i.unit,`class="ui" data-k="${k}" aria-label="Unit"`)}</div></div><button class="r" data-rm="${k}" aria-label="Remove">✕</button></div>`).join('')}<div class="err" id="er"></div><button id="ok" style="width:100%">Add meal</button><button class="g" id="back" style="width:100%;margin-top:.5rem">Back</button>`};
   sh.el.oninput=e=>{if(rv&&e.target.id==='nm')rv.name=e.target.value};
   sh.el.onchange=e=>{if(!rv)return;const t=e.target;
     if(t.id==='mk')rv.making=Math.max(.25,+t.value||1);
@@ -115,7 +119,7 @@ async function addSheet(slot){
     if(t.classList.contains('qi'))rv.items[+t.dataset.k].qty=Math.max(0,+t.value||0);
     if(t.classList.contains('ui'))rv.items[+t.dataset.k].unit=t.value;
     if(t.classList.contains('ni')){const it=rv.items[+t.dataset.k];it.name=t.value.trim()||it.name;t.value=it.name;it.suspect=false;t.classList.remove('warnb');t.parentElement.querySelector('.sus')?.remove()}};
-  const finish=async(name,text,ingredients,sourceUrl,servings=1,portions=1,share=true,steps=[])=>{ingredients=ingredients.map(({orig,suspect,learned,...i})=>i);const id=await db.recipes.add({name,text,ingredients,sourceUrl,servings,steps});
+  const finish=async(name,text,ingredients,sourceUrl,servings=1,portions=1,share=true,steps=[])=>{ingredients=ingredients.map(({orig,suspect,learned,unknown,alts,review,...i})=>i);const id=await db.recipes.add({name,text,ingredients,sourceUrl,servings,steps});
     const on=share&&await shareOn();learn(ingredients,on);if(on)cloud.shareRecipe(name,ingredients,servings,sourceUrl,steps);sh.close();plan(slot,id,portions)};
   sh.el.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const er=sh.q('#er');
     if(b.dataset.r){const pp=Math.max(.25,+sh.q('#pp')?.value||1);sh.close();plan(slot,+b.dataset.r,pp)}
@@ -129,6 +133,7 @@ async function addSheet(slot){
           stash={nm:name,tx:sh.q('#tx').value};rv={name,url:f.url,yield:f.yield,making:1,removed:[],steps:f.steps||[],items:items.map(i=>({...i,orig:{name:i.name,qty:i.qty,unit:i.unit}}))};draw()}}
       catch(x){er.textContent=x.message+' Paste the ingredients below instead.';busy(b,0,'🔎 Find recipe online')}}
     if(b.id==='back'){body.innerHTML=mainHTML;sh.q('#nm').value=rv.name;sh.q('#tx').value=stash.tx||'';rv=null}
+    if(b.dataset.alt){const [k,nm]=[+b.dataset.alt.split('|')[0],b.dataset.alt.split('|').slice(1).join('|')],it=rv.items[k];Object.assign(it,reprice(it,nm),{suspect:false,unknown:false,alts:[]});draw();return}
     if(b.dataset.rm){rv.removed.push(...rv.items.splice(+b.dataset.rm,1));draw()}
     if(b.id==='ok'){const items=rv.items.map(i=>({...i})).filter(i=>i.qty>0);
       const name=rv.name.trim();if(!name)return er.textContent='Give your meal a name.';
@@ -146,12 +151,13 @@ async function addSheet(slot){
 // Steps in order, with a timer button wherever a step mentions a time.
 function stepsSheet(r,steps){
   const key=(i,k)=>`${r.id}:${i}:${k}`;
-  const sh=sheet(`<h3>${esc(r.name)}</h3><div style="color:var(--mute);font-size:.9rem;margin:-.4rem 0 .9rem">${steps.length} step${steps.length===1?'':'s'} · tap the circle when one is done</div>${steps.map((t,i)=>`<div class="step"><button class="chk" data-done="${i}" aria-label="Mark step ${i+1} done"></button><div class="t"><div class="sn">Step ${i+1}</div><p>${esc(t)}</p>${detectTimers(t).map((d,k)=>`<button class="tm" data-tk="${key(i,k)}" data-secs="${d.seconds}" data-lab="${esc(d.label)}">⏱ ${esc(d.label)}</button>`).join('')}</div></div>`).join('')}`);
+  const sh=sheet(`<h3>${esc(r.name)}</h3><div style="color:var(--mute);font-size:.9rem;margin:-.4rem 0 .9rem">${steps.length} step${steps.length===1?'':'s'} · tap the circle when one is done</div>${steps.map((t,i)=>`<div class="step"><button class="chk" data-done="${i}" aria-label="Mark step ${i+1} done"></button><div class="t"><div class="sn">Step ${i+1}</div><p>${esc(t)}</p>${detectTimers(t).map((d,k)=>`<button class="tm" data-tk="${key(i,k)}" data-secs="${d.seconds}" data-lab="${esc(d.label)}">⏱ ${esc(d.label)}</button>`).join('')}</div></div>`).join('')}<button class="g" id="cl" style="width:100%;margin-top:.4rem">Done</button>`);
   const upd=()=>{if(!document.body.contains(sh.el)){off();return}
     sh.el.querySelectorAll('.tm').forEach(b=>{const t=timers.find(b.dataset.tk);b.classList.toggle('run',!!t);
       b.textContent=t?`⏱ ${b.dataset.lab.split(' · ')[0]} · ${fmtTime(timers.left(t))}`:`⏱ ${b.dataset.lab}`})};
   const off=timers.onTick(upd);upd();
   sh.el.onclick=e=>{const b=e.target.closest('button');if(!b)return;
+    if(b.id==='cl')return sh.close();
     if(b.dataset.done!==undefined){const on=b.closest('.step').classList.toggle('done');b.classList.toggle('on',on);b.textContent=on?'✓':''}
     if(b.dataset.tk){
       if(timers.find(b.dataset.tk))timers.stop(b.dataset.tk);
@@ -159,7 +165,15 @@ function stepsSheet(r,steps){
         if(Notification?.permission==='default')Notification.requestPermission()}}};
 }
 function drawTimers(){
-  $('#tb').innerHTML=timers.all().map(t=>`<div class="tchip"><span>⏱ ${esc(t.label)} · ${fmtTime(timers.left(t))}</span><button data-stop="${esc(t.id)}" aria-label="Stop timer">✕</button></div>`).join('');
+  const tb=$('#tb'),list=timers.all(),have=new Map([...tb.children].map(c=>[c.dataset.id,c]));
+  for(const [id,c] of have)if(!list.some(t=>t.id===id))c.remove();
+  for(const t of list){
+    let c=have.get(t.id);
+    if(!c){c=document.createElement('div');c.className='tchip';c.dataset.id=t.id;
+      c.innerHTML='<span></span><button aria-label="Stop timer">✕</button>';c.querySelector('button').dataset.stop=t.id;tb.append(c)}
+    const sp=c.firstElementChild,txt=`⏱ ${t.label} · ${fmtTime(timers.left(t))}`;
+    if(sp.textContent!==txt)sp.textContent=txt;
+  }
 }
 $('#tb').onclick=e=>{const id=e.target.closest('button')?.dataset.stop;if(id)timers.stop(id)};
 timers.onTick(drawTimers);

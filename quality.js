@@ -1,11 +1,5 @@
-// Guards around the ingredient engine's guesses: tidy lines it is known to misread, and spot results that look wrong.
+// A second opinion on the ingredient engine's guesses: spots results that look wrong for the line.
 import {getIngredient} from './ingredient-engine.js';
-// The engine reads "minced" as "minced beef" ("2 cloves minced garlic" → Ground Beef). Keep the word only for beef lines.
-export function cleanLine(line){
-  const s=String(line);
-  if(!/\bminced?\b/i.test(s)||/\bbeef\b/i.test(s))return s;
-  return s.replace(/\bminced?\b/gi,' ').replace(/\s{2,}/g,' ').replace(/\s+,/g,',').replace(/[,;]\s*$/,'').trim();
-}
 const PREP=new Set(['minced','mince','chopped','diced','sliced','grated','crushed','ground','fresh','finely','roughly','small','large','medium','whole','boneless','skinless','cooked','raw','dried','frozen','canned','tinned','packed','heaping','level','cups','cup','tbsp','tsp','tablespoon','tablespoons','teaspoon','teaspoons','of','and','or','the','for','taste','pinch','dash','clove','cloves','pieces','piece','pcs','inch','handful','few','some','about','optional','plus','extra']);
 const stem=w=>w.replace(/(ies|es|s)$/,'');
 const near=(a,b)=>{const x=stem(a),y=stem(b);return x===y||(Math.min(x.length,y.length)>=4&&(x.startsWith(y)||y.startsWith(x)))};
