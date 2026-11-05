@@ -5,7 +5,7 @@ const hits=new Map();
 module.exports=async(req,res)=>{
   const ip=(req.headers['x-forwarded-for']||'').split(',')[0]||'x',now=Date.now();
   const h=(hits.get(ip)||[]).filter(t=>now-t<6e4);
-  if(h.length>=120)return res.status(429).json({error:'Too many requests'});
+  if(h.length>=400)return res.status(429).json({error:'Too many requests'});
   h.push(now);hits.set(ip,h);
   let u;try{u=new URL(String(req.query.url||''))}catch{return res.status(400).json({error:'Bad URL'})}
   if(u.protocol!=='https:'||!ok(u.hostname))return res.status(403).json({error:'Site not allowed'});

@@ -1,5 +1,5 @@
 // Cooking steps: splitting pasted text into steps and finding times that need a timer (powered by the ingredient engine).
-import {splitStepsText,detectDurations} from './ingredient-engine.js';
+import {engine} from './engine.js';
 const clean=s=>String(s).replace(/\s+/g,' ').trim();
 const strip=p=>p.replace(/^(?:step\s*)?\d{1,2}\s*[.):\-–]\s*/i,'').replace(/^[•\-*]\s*/,'');
 function localSplit(text){
@@ -10,7 +10,7 @@ function localSplit(text){
 }
 // "1. Chop… 2. Fry…" or one step per line → array of step strings
 export function splitSteps(text){
-  try{const s=(splitStepsText(String(text||''))||[]).map(x=>strip(clean(x))).filter(p=>p.length>2);if(s.length)return s}catch{}
+  try{const E=engine();if(E){const s=(E.splitStepsText(String(text||''))||[]).map(x=>strip(clean(x))).filter(p=>p.length>2);if(s.length)return s}}catch{}
   return localSplit(text);
 }
 export function fmtTime(s){s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60,p=n=>String(n).padStart(2,'0');return h?`${h}:${p(m)}:${p(x)}`:`${m}:${p(x)}`}
@@ -19,7 +19,7 @@ const cap=w=>w?w[0].toUpperCase()+w.slice(1).toLowerCase():'Timer';
 // Times in one step that deserve a timer, e.g. {label:"Simmer · 10–15 min", seconds:600}. Ranges use the lower end.
 export function detectTimers(text){
   const out=[],seen=new Set();let d=[];
-  try{d=detectDurations(String(text))||[]}catch{}
+  try{d=engine()?.detectDurations(String(text))||[]}catch{}
   for(const x of d){
     const secs=Math.round(x.seconds);if(!(secs>=5&&secs<=172800))continue;
     const verb=x.label&&x.label!=='other'?x.label:(x.kind&&x.kind!=='other'?x.kind:'timer');

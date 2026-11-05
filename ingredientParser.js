@@ -1,5 +1,5 @@
 // Offline ingredient parser: wraps ingredient-engine.js (no network, no AI, instant).
-import {parseIngredients as parse,getIngredient} from './ingredient-engine.js';
+import {loadEngine,engine} from './engine.js';
 import {toGrams} from './inventoryEngine.js';
 import {apply as applyCorrections,prefetch} from './corrections.js';
 import {suspect} from './quality.js';
@@ -19,9 +19,10 @@ function toItem(it,line){
 }
 export async function parseIngredients(text){
   const lines=String(text).split('\n').map(s=>s.trim()).filter(Boolean),out=[];
-  await prefetch(lines);   // fixes other users agreed on, if any
+  const E=await loadEngine();   // already loaded in the background; this only waits on a very early tap
+  prefetch(lines).catch(()=>{}); // fixes other users agreed on are fetched for next time; parsing never waits on the network
   for(const line of lines){
-    let items=[];try{items=parse(line)}catch{}
+    let items=[];try{items=E.parseIngredients(line)}catch{}
     if(!items.length)throw new Error(`Couldn't read: “${line.slice(0,40)}”. Try something like “2 cups flour”.`);
     const made=applyCorrections(line,items.map(it=>toItem(it,line)));   // what this user (or the community) corrected before
     out.push(...made.map(i=>({...i,suspect:!i.learned&&(i.review||i.unknown||suspect(line,i.name))})));
@@ -31,7 +32,7 @@ export async function parseIngredients(text){
 }
 // The user picked one of the engine's other suggestions: switch the name and recalculate calories for the same amount.
 export function reprice(item,altName){
-  const g=getIngredient(String(altName).toLowerCase()),name=String(g?.name||altName).replace(/\s*\(.*?\)\s*/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
+  const g=engine()?.getIngredient(String(altName).toLowerCase()),name=String(g?.name||altName).replace(/\s*\(.*?\)\s*/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
   const raw=g?.nutrition;if(!raw)return {name};
   const n=Array.isArray(raw)?raw:[raw.kcal,raw.protein,raw.carbs,raw.fat];     // per 100 g: kcal, protein, carbs, fat
   const k=toGrams(item.qty,item.unit,name)/100,r=x=>Math.round((x||0)*k*10)/10;

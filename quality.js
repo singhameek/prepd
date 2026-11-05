@@ -1,5 +1,5 @@
 // A second opinion on the ingredient engine's guesses: spots results that look wrong for the line.
-import {getIngredient} from './ingredient-engine.js';
+import {engine} from './engine.js';
 const PREP=new Set(['minced','mince','chopped','diced','sliced','grated','crushed','ground','fresh','finely','roughly','small','large','medium','whole','boneless','skinless','cooked','raw','dried','frozen','canned','tinned','packed','heaping','level','cups','cup','tbsp','tsp','tablespoon','tablespoons','teaspoon','teaspoons','of','and','or','the','for','taste','pinch','dash','clove','cloves','pieces','piece','pcs','inch','handful','few','some','about','optional','plus','extra']);
 const stem=w=>w.replace(/(ies|es|s)$/,'');
 const near=(a,b)=>{const x=stem(a),y=stem(b);return x===y||(Math.min(x.length,y.length)>=4&&(x.startsWith(y)||y.startsWith(x)))};
@@ -12,6 +12,6 @@ export function suspect(line,name){
   if(!lw.length||!nw.length)return false;
   if(nw.some(w=>lw.some(l=>near(l,w))))return false;
   const first=nm.split(' ')[0];
-  const known=l=>{try{const g=getIngredient(l);return !!g&&String(g.name||'').toLowerCase().includes(first)}catch{return false}};
+  const known=l=>{try{const g=engine()?.getIngredient(l);return !!g&&String(g.name||'').toLowerCase().includes(first)}catch{return false}};
   return !lw.some(known);
 }

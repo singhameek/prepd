@@ -7,11 +7,14 @@ async function tryFetch(u,ms){
   const c=new AbortController(),t=setTimeout(()=>c.abort(),ms);
   try{return await fetch(u,{signal:c.signal})}finally{clearTimeout(t)}
 }
-// Fail fast: a firewall block (403/429) skips the site instead of retrying elsewhere.
-async function get(url,ms=6000){
-  try{const r=await tryFetch(PROXIES[0]+encodeURIComponent(url),ms);
-    if(r.ok)return await r.text();if(r.status===403||r.status===429)throw new Error('blocked')}
-  catch(e){if(e.message==='blocked')throw e}
+// Fail fast. Our own proxy answering "not found" or "blocked" is final; only a failure of the proxy itself
+// (network error, timeout, 5xx) is retried through the backup proxy.
+async function get(url,ms=5000){
+  try{
+    const r=await tryFetch(PROXIES[0]+encodeURIComponent(url),ms);
+    if(r.ok)return await r.text();
+    if(r.status<500)throw new Error('final');
+  }catch(e){if(e.message==='final')throw e}
   const r=await tryFetch(PROXIES[1]+encodeURIComponent(url),ms);
   if(!r.ok)throw new Error('failed');return r.text();
 }
@@ -99,25 +102,36 @@ async function mealDb(name,qs){
   }catch{}}
   return null;
 }
+const readPage=async(l,name)=>{const x=extract(await get(l));if(!x||!rel(name,(x.title||'')+' '+l))throw 0;return {...x,url:l}};
+// Asks every site in the list at the same time. The first site whose matching page reads as a recipe wins; sites for
+// the dish's likely cuisine get a short head start so a good local match isn't beaten by a lucky stranger.
+function race(sites,prio,qs,name,html){
+  return new Promise(resolve=>{
+    let left=sites.length;if(!left)return resolve(null);
+    const no=()=>{if(--left===0)resolve(null)};
+    for(const d of sites)
+      siteSearch(d,qs,name,html)
+        .then(links=>links.length?Promise.any(links.slice(0,2).map(l=>readPage(l,name))):Promise.reject())
+        .then(v=>{const wait=prio.has(d)||!prio.size?0:450;wait?setTimeout(()=>resolve(v),wait):resolve(v)},no);
+  });
+}
+const never=new Promise(()=>{});
 export async function findRecipe(name,onStatus=()=>{}){
-  const qs=variants(name),plan=regionPlan(name),backup=mealDb(name,qs); // backup runs in parallel, used only if sites fail
-  const deadline=Date.now()+24000;
-  const read=async links=>{
-    if(!links.length)return null;onStatus('Reading recipe…');
-    return Promise.any(links.slice(0,5).map(async l=>{const r=extract(await get(l));if(!r||!rel(name,(r.title||'')+' '+l))throw 0;return {...r,url:l}})).catch(()=>null);
-  };
+  const qs=variants(name),plan=regionPlan(name),prio=new Set(plan.first),all=[...plan.first,...plan.rest];
+  const backup=mealDb(name,qs).then(m=>m?new Promise(res=>setTimeout(()=>res(m),2500)):never); // runs alongside; only wins if the sites are slow
+  const deadline=Date.now()+20000;
   const longWords=[...new Set(words(name).filter(w=>w.length>=4))].sort((a,b)=>b.length-a.length).slice(0,2);
-  const waves=[
-    ['Searching recipe sites…',()=>searchSites(plan.first,qs,name)],
-    ['Searching more cuisines…',()=>searchSites(plan.rest,qs,name)],
-    ['Trying site search pages…',()=>searchSites(plan.first.slice(0,6),qs,name,true)],
-    ['Checking spelling variants…',()=>longWords.length?searchSites(plan.first,longWords,name):[]]];
-  onStatus(waves[0][0]);let r=null;
-  for(const [msg,f] of waves){
-    if(Date.now()>deadline)break;onStatus(msg);
-    r=await read(await f().catch(()=>[]));if(r)break;
+  const phases=[
+    [`Searching ${all.length} recipe sites…`,()=>race(all,prio,qs,name,false)],
+    ['Trying site search pages…',()=>race([...plan.first.slice(0,8),...plan.rest.slice(0,8)],prio,qs,name,true)],
+    ['Checking spelling variants…',()=>longWords.length?race(all,prio,longWords,name,false):null]];
+  let r=null;
+  for(const [msg,run] of phases){
+    if(Date.now()>deadline)break;
+    onStatus(msg);
+    r=await Promise.race([run(),backup]);if(r)break;
   }
-  r=r||await backup;
+  r=r||await Promise.race([backup,new Promise(res=>setTimeout(()=>res(null),600))]);
   if(!r)throw new Error('No recipe found for that name.');
   return r;
 }

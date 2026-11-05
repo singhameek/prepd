@@ -8,6 +8,9 @@ db.version(1).stores({
   groceryList:'++id,name,checked',
   appSettings:'key'
 });
+// iOS can drop the database connection while the app is in the background: reopen it when it comes back.
+db.on('close',()=>{setTimeout(()=>{try{db.open()}catch{}},0)});
+if(typeof document!=='undefined')document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!db.isOpen())db.open().catch(()=>{})});
 export const today=()=>new Date().toLocaleDateString('sv');
 export async function requestPersistence(){
   if(!navigator.storage?.persist)return false;
@@ -35,11 +38,12 @@ export function scheduleAutoBackup(){
   try{localStorage.setItem('prepd_dirty','1')}catch{}
   clearTimeout(timer);
   timer=setTimeout(async()=>{
+    await new Promise(r=>typeof requestIdleCallback==='function'?requestIdleCallback(r,{timeout:3000}):setTimeout(r,50));   // not while the screen is busy
     const cur=(await db.appSettings.get('backupCursor'))?.value??-1,n=(cur+1)%3,snap=await exportUserData();
     await db.appSettings.put({key:'backup_'+n,value:snap,ts:Date.now()});
     await db.appSettings.put({key:'backupCursor',value:n});
     try{await onBackup?.(snap)}catch{}  // also copies to the cloud when set up
-  },2000);
+  },4000);
 }
 for(const t of TABLES)for(const h of['creating','updating','deleting'])db[t].hook(h,()=>{scheduleAutoBackup()});
 // If data vanished (e.g. store corrupted) restore the newest backup automatically.
