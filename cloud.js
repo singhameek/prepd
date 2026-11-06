@@ -148,3 +148,19 @@ export async function getProfile(key){
   return data&&(data.pc||data.d)?{pc:data.pc?+data.pc:null,d:data.d?+data.d:null,src:'community'}:null;
 }
 export async function contributeProfile(key,pc,d){if(user)try{await sb.rpc('contribute_profile',{p_key:key,p_pc:pc||null,p_d:d||null})}catch{}}
+// Is this an ingredient in any recipe saved on the platform? true / false, or null when it can't be checked.
+export async function ingredientKnown(name){
+  if(!sb)return null;
+  const base=String(name).trim().toLowerCase(),sing=base.replace(/ies$/,'y').replace(/(es|s)$/,'');
+  const rs=await Promise.all([...new Set([base,sing])].map(v=>sb.from('recipes_public').select('id').contains('ingredients',[{name:v}]).limit(1)));
+  if(rs.some(r=>r.data&&r.data.length))return true;
+  return rs.every(r=>r.error)?null:false;
+}
+// ---- reminders (web push)
+export async function savePushSub(sub,tz){
+  if(!user)return false;
+  const {error}=await sb.from('push_subs').upsert({endpoint:sub.endpoint,user_id:user.id,sub,tz:tz||null});
+  return !error;
+}
+export async function deletePushSub(endpoint){if(user)try{await sb.from('push_subs').delete().eq('endpoint',endpoint)}catch{}}
+export async function touchOpen(){if(user)try{await sb.rpc('touch_open')}catch{}}   // lets the server see whether reminders get acted on

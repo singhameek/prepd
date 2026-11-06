@@ -1,1 +1,4 @@
-{"functions":{"api/*.js":{"maxDuration":60}}}
+{
+  "functions": { "api/*.js": { "maxDuration": 60 } },
+  "crons": [ { "path": "/api/remind", "schedule": "30 1 * * *" } ]
+}

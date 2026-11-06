@@ -90,6 +90,12 @@ select{appearance:none;-webkit-appearance:none;padding-right:2.2rem;cursor:point
 nav button{border-radius:1.2rem;transition:background .3s,color .3s,transform .12s var(--ease)}nav button.on{background:var(--accT)}
 #ob{position:fixed;top:calc(env(safe-area-inset-top) + .5rem);left:50%;transform:translate(-50%,-250%);background:var(--ink);color:#fff;padding:.4rem 1rem;border-radius:2rem;font-size:.82rem;z-index:80;transition:transform .45s var(--bounce);white-space:nowrap}#ob.on{transform:translate(-50%,0)}
 .wclip{overflow:hidden;touch-action:pan-y;user-select:none}.wnav{display:flex;gap:.6rem}.wnav>*{flex:1;padding:.95rem;font-size:1.02rem}
+.tag{background:var(--accT);color:var(--acc);box-shadow:none;padding:.2rem .6rem;border-radius:2rem;font-size:.76rem;margin-top:.3rem;font-weight:650}
+.nudge{display:flex;align-items:center;gap:.8rem;background:linear-gradient(135deg,#fff3f0,#fff 70%);border:2px solid #ffd9d4;box-shadow:0 3px 0 #ffd9d4;border-radius:1.4rem;padding:.8rem 1rem;margin-bottom:.8rem}
+.nudge .t{flex:1;min-width:0}.nudge .s{color:var(--mute);font-size:.85rem}.nudge .nem{font-size:1.6rem}.nudge button{padding:.5rem .9rem}
+.seg{display:flex;gap:.25rem;flex:none}.seg button{background:var(--accT);color:var(--mute);box-shadow:none;padding:.4rem .6rem;border-radius:2rem;font-size:.8rem;font-weight:650}
+.seg button.on{background:var(--acc);color:#fff}
+.cp.ghost{background:transparent;color:var(--mute);border-color:transparent;box-shadow:none}
 .empty{text-align:center;color:var(--mute);padding:3rem 1rem}.empty:before{content:attr(data-e);display:block;font-size:3rem;margin-bottom:.4rem;animation:wob 2.4s ease-in-out infinite}@keyframes wob{50%{transform:rotate(8deg) scale(1.08)}}.empty b{display:block;color:var(--ink);font-size:1.1rem;margin-bottom:.2rem}
 .fab{position:fixed;right:max(1rem,calc(50% - 17rem));bottom:calc(5.2rem + env(safe-area-inset-bottom));width:3.4rem;height:3.4rem;border-radius:50%;padding:0;font-size:1.8rem;box-shadow:0 6px 20px rgba(255,77,61,.45);z-index:4}
 nav{position:fixed;inset:auto 0 0;z-index:6;display:flex;justify-content:center;gap:.5rem;padding:.4rem .5rem calc(env(safe-area-inset-bottom) + .4rem);background:var(--glass);border-top:1px solid var(--line)}

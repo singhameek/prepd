@@ -4,6 +4,10 @@ import {findRecipe} from './recipeFinder.js';
 import * as cloud from './cloud.js';
 import {resolveUnits,learn,loadProfiles} from './units.js';
 import {loadEngine} from './engine.js';
+import * as habits from './habits.js';
+import {classifyFast,classifyCommunity,loadKnown,loadOverrides,setOverride} from './foodcheck.js';
+import * as push from './push.js';
+import {dayLabel,dayName,weekdayOf} from './reminders.mjs';
 import {splitSteps,detectTimers,fmtTime} from './steps.js';
 import * as timers from './timers.js';
 import {loadCorrections,learn as learnCorr} from './corrections.js';
@@ -41,16 +45,19 @@ function burst(el){
 const who=()=>cloud.username()||localStorage.getItem('prepd_username')||'';
 const SEED=Math.floor(Math.random()*1000);   // a different greeting each time the app opens
 // The friendly card at the top of the home screen.
-function helloCard(todayPlans,groceryN,eaten,planned){
+function helloCard(todayPlans,groceryN,eaten,planned,nudge,checkDue){
   const h=new Date().getHours(),meal=h<11?'breakfast':h<16?'lunch':'dinner',done=new Set(todayPlans.map(p=>p.slot));
   const qs=[`What’s for ${meal} today?`,'Anything tasty on the menu?','Ready to prep something delicious?','Hungry yet? Let’s plan it.','Craving something new today?',`How about a ${meal} you’ll love?`,'What are we cooking next?','Your kitchen is ready when you are.'];
   const line=done.size>=3?['Today’s fully planned. Nicely done! 🎉','Breakfast, lunch and dinner sorted. Chef’s kiss 👌'][SEED%2]:groceryN>=4?`Your grocery list has ${groceryN} items. Shopping day? 🛒`:qs[SEED%qs.length];
+  const wdName=dayName(weekdayOf(Date.now(),habits.get().tz));
+  const line2=nudge&&nudge.send?(nudge.type==='checkin'?'A quick pantry check-in keeps everything accurate 🧺':`It’s ${wdName}, one of your usual planning days. Ready to plan the week? 🗓️`):line;
   const next=!done.has(meal)?meal:SLOTS.map(s=>s[0]).find(k=>!done.has(k));
   const chips=[next?`<button class="cp" data-chipadd="${next}">${SLOTS.find(s=>s[0]===next)[3]} Plan ${next}</button>`:'',
-    `<button class="cp" data-go="pantry">🧺 Pantry</button>`,`<button class="cp" data-go="grocery">🛒 Grocery${groceryN?` (${groceryN})`:''}</button>`,
-    cloud.enabled&&!cloud.signedIn()?`<button class="cp" data-acct="1">☁️ Back up my data</button>`:''].join('');
+    checkDue?`<button class="cp" data-ck="1">🧺 Pantry check-in</button>`:`<button class="cp" data-go="pantry">🧺 Pantry</button>`,`<button class="cp" data-go="grocery">🛒 Grocery${groceryN?` (${groceryN})`:''}</button>`,
+    cloud.enabled&&!cloud.signedIn()?`<button class="cp" data-acct="1">☁️ Back up my data</button>`:'',
+    nudge&&nudge.send?`<button class="cp ghost" data-dismiss="1">Not now</button>`:''].join('');
   const pct=planned?Math.min(100,Math.round(eaten/planned*100)):0;
-  return `<div class="hello"><div class="hi">Hey ${esc(who()||'there')}! <span class="wave">👋</span></div><div class="hq">${line}</div>${planned?`<div class="dayb"><div class="dl"><span>${eaten.toLocaleString()} eaten</span><span>${planned.toLocaleString()} kcal planned today</span></div><div class="bt"><div class="bf" style="width:${pct}%"></div></div></div>`:''}<div class="chips">${chips}</div></div>`;
+  return `<div class="hello"><div class="hi">Hey ${esc(who()||'there')}! <span class="wave">👋</span></div><div class="hq">${line2}</div>${planned?`<div class="dayb"><div class="dl"><span>${eaten.toLocaleString()} eaten</span><span>${planned.toLocaleString()} kcal planned today</span></div><div class="bt"><div class="bf" style="width:${pct}%"></div></div></div>`:''}<div class="chips">${chips}</div></div>`;
 }
 function toast(t){const e=document.createElement('div');e.className='toast';e.textContent=t;document.body.append(e);requestAnimationFrame(()=>requestAnimationFrame(()=>e.classList.add('on')));setTimeout(()=>{e.classList.remove('on');setTimeout(()=>e.remove(),400)},2600)}
 const head=(t,s='')=>{$('#t').textContent=t;$('#s').textContent=s};
@@ -78,14 +85,15 @@ const delRecipe=async id=>{await db.mealPlans.where('recipeId').equals(id).delet
 const confirmDel=async b=>{if(b.dataset.armed)return true;const t=b.textContent;b.dataset.armed=1;b.textContent='Tap again to delete';setTimeout(()=>{delete b.dataset.armed;b.textContent=t},3000);return false};
 async function renderPlan(dx=0){
   const wk=monday(sel),days=[...Array(7)].map((_,i)=>addDays(wk,i));
-  const [plans,allRecipes,todayRows,gN]=await Promise.all([db.mealPlans.where('date').between(days[0],days[6],true,true).toArray(),db.recipes.toArray(),db.mealPlans.where('date').equals(today()).toArray(),db.groceryList.count()]);
+  const [plans,allRecipes,todayRows,gN,next3,pantryN]=await Promise.all([db.mealPlans.where('date').between(days[0],days[6],true,true).toArray(),db.recipes.toArray(),db.mealPlans.where('date').equals(today()).toArray(),db.groceryList.count(),db.mealPlans.where('date').between(today(),addDays(today(),2),true,true).toArray(),db.pantryItems.count()]);
   const recs=new Map(allRecipes.map(r=>[r.id,r]));
   const dayPlans=plans.filter(p=>p.date===sel&&recs.has(p.recipeId));
   const total=dayPlans.reduce((a,p)=>a+kcal(recs.get(p.recipeId),planScale(p,recs.get(p.recipeId))),0);
   head(sel===today()?'Today':fmt(sel,{weekday:'long'}),fmt(sel,{day:'numeric',month:'long'})+(total?` · ${total.toLocaleString()} kcal planned`:''));
   const tp=todayRows.filter(p=>recs.has(p.recipeId));
   const kc=a=>a.reduce((n,p)=>n+kcal(recs.get(p.recipeId),planScale(p,recs.get(p.recipeId))),0);
-  const hello=helloCard(tp,gN,kc(tp.filter(p=>p.logged)),kc(tp));
+  const nudge=habits.nudge({upcoming3:next3.filter(p=>!p.logged&&recs.has(p.recipeId)).length,pantryCount:pantryN});
+  const hello=helloCard(tp,gN,kc(tp.filter(p=>p.logged)),kc(tp),nudge,habits.checkinDue(pantryN));
   m.innerHTML=hello+`<div class="wk"><button class="n" data-wk="-7" aria-label="Previous week">‹</button>${days.map(d=>`<button class="d ${d===sel?'sel':''} ${d===today()?'t':''}" data-d="${d}"><span>${fmt(d,{weekday:'short'})}</span><b>${+d.slice(8)}</b><i class="${plans.some(p=>p.date===d)?'on':''}"></i></button>`).join('')}<button class="n" data-wk="7" aria-label="Next week">›</button></div><div id="body">${SLOTS.map(([k,l,c,em])=>{
     const ps=dayPlans.filter(x=>x.slot===k);
     return ps.map(p=>{const r=recs.get(p.recipeId);
@@ -97,6 +105,8 @@ async function renderPlan(dx=0){
     if(d.go){tab=d.go;scrollTo(0,0);m.classList.add('stagger');setTimeout(()=>m.classList.remove('stagger'),600);render()}
     else if(d.chipadd){sel=today();addSheet(d.chipadd)}
     else if(d.acct)authSheet('signup',{done:()=>render()})
+    else if(d.ck)checkinSheet()
+    else if(d.dismiss){await habits.dismissNudge();render()}
     else if(d.wk){sel=addDays(sel,+d.wk);renderPlan(+d.wk>0?1:-1)}
     else if(d.d){const dir=d.d>sel?1:d.d<sel?-1:0;sel=d.d;renderPlan(dir)}
     else if(d.add)addSheet(d.add);else if(d.meal)mealSheet(+d.meal)};
@@ -123,6 +133,7 @@ async function syncSoon(){
 const shareOn=async()=>(await db.appSettings.get('cloud_share'))?.value!==false;
 async function plan(slot,recipeId,portions=1){
   await db.mealPlans.add({date:sel,slot,recipeId,portions,logged:0});
+  habits.record('plan').catch(()=>{});                        // learns when this person usually plans
   askNotif();
   render();                                                   // show the new meal straight away
   syncSoon().then(r=>{if(r&&r.changed&&r.length)toast(`${r.length} item${r.length>1?'s':''} on your Grocery list`)});
@@ -168,6 +179,28 @@ async function addSheet(slot){
       busy(b,1,'Reading ingredients…');
       const serves=Math.max(1,Math.round(+sh.q('#sr').value)||1),portions=Math.max(.25,+sh.q('#pp').value||1);
       try{await finish(name,text,await parseIngredients(text),'',serves,portions,true,splitSteps(sh.q('#stx')?.value||''))}catch(x){er.textContent=x.message;busy(b,0,'Add meal')}}};
+}
+// Weekly pantry check-in: a quick pass to keep the pantry honest. Untouched items stay as they are.
+async function checkinSheet(){
+  const items=(await db.pantryItems.toArray()).sort((a,b)=>a.name.localeCompare(b.name));
+  if(!items.length)return toast('Your pantry is empty. Add a few items first.');
+  const st=new Map();
+  const sh=sheet(`<h3>Pantry check-in</h3><div style="color:var(--mute);font-size:.92rem;margin:-.4rem 0 .9rem">Tap how each item looks. Anything you leave alone stays as it is.</div>${items.map(i=>`<div class="row ck" data-id="${i.id}"><span class="em sm">${emojiFor(i.name)}</span><div class="t"><b>${esc(i.name)}</b><div class="s">${esc(amt(i))}</div></div><div class="seg"><button data-s="ok" class="on" aria-label="Fine">👍</button><button data-s="low">Low</button><button data-s="out">Out</button></div></div>`).join('')}<button id="ckdone" style="width:100%;margin-top:.4rem">Done</button>`);
+  sh.el.onclick=async e=>{
+    const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.s){const r=b.closest('.ck');r.querySelectorAll('.seg button').forEach(x=>x.classList.toggle('on',x===b));st.set(+r.dataset.id,b.dataset.s);return}
+    if(b.id!=='ckdone')return;
+    busy(b,1,'Saving…');
+    const puts=[],dels=[];
+    for(const i of items){const s=st.get(i.id);
+      if(s==='out')dels.push(i.id);
+      else if(s==='low'){const cap=Math.max(i.capacity||0,i.qty);puts.push({...i,capacity:cap,qty:Math.round(Math.min(i.qty,cap*.15)*100)/100})}}
+    if(dels.length)await db.pantryItems.bulkDelete(dels);
+    if(puts.length)await db.pantryItems.bulkPut(puts);
+    await habits.markCheckin();
+    sh.close();burst(b);toast(dels.length+puts.length?`Pantry updated · ${dels.length+puts.length} change${dels.length+puts.length>1?'s':''}`:'All good! Check-in done ✓');
+    render();syncSoon();
+  };
 }
 // Steps in order, with a timer button wherever a step mentions a time.
 async function stepsSheet(r,steps){
@@ -227,11 +260,13 @@ async function mealSheet(id){
 }
 async function renderPantry(){
   const it=await db.pantryItems.toArray();head('Pantry',it.length?`${it.length} item${it.length>1?'s':''}`:'');
-  m.innerHTML=it.length?it.map(i=>{const p=i.capacity?Math.min(1,i.qty/i.capacity):1;return `<button class="row" data-i="${i.id}"><span class="em sm">${emojiFor(i.name)}</span><div class="t"><b>${esc(i.name)}</b> <span class="s">${convertMetricToFractionalUI(i.qty,i.capacity)} · ${amt(i)}</span><div class="bt"><div class="bf ${p<.2?'low':''}" style="width:${p*100}%"></div></div></div></button>`}).join('')
-   :'<div class="empty" data-e="🧺"><b>Your pantry is empty</b>Add what you have, or tick off groceries to stock it.</div>';
+  const last=habits.daysSinceCheckin(),due=habits.checkinDue(it.length);
+  m.innerHTML=(due?`<div class="nudge"><span class="nem">🧺</span><div class="t"><b>Weekly pantry check-in</b><div class="s">${last===null?'Never done':`Last done ${last} day${last===1?'':'s'} ago`}. Takes about a minute.</div></div><button id="ck">Start</button></div>`:'')+(it.length?it.map(i=>{const p=i.capacity?Math.min(1,i.qty/i.capacity):1;return `<button class="row" data-i="${i.id}"><span class="em sm">${emojiFor(i.name)}</span><div class="t"><b>${esc(i.name)}</b> <span class="s">${convertMetricToFractionalUI(i.qty,i.capacity)} · ${amt(i)}</span><div class="bt"><div class="bf ${p<.2?'low':''}" style="width:${p*100}%"></div></div></div></button>`}).join('')
+   :'<div class="empty" data-e="🧺"><b>Your pantry is empty</b>Add what you have, or tick off groceries to stock it.</div>');
   m.innerHTML+='<button class="fab" data-new aria-label="Add item">+</button>';
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;
-    if('new'in b.dataset)itemSheet();else if(b.dataset.i)itemSheet(await db.pantryItems.get(+b.dataset.i))};
+    if(b.id==='ck')checkinSheet();
+    else if('new'in b.dataset)itemSheet();else if(b.dataset.i)itemSheet(await db.pantryItems.get(+b.dataset.i))};
 }
 function itemSheet(it){
   const sh=sheet(`<h3>${it?'Edit item':'Add to pantry'}</h3><input id="nm" placeholder="Name" value="${it?esc(it.name):''}"><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount" value="${it?q1(it.qty):''}">${unitSel('u',it?it.unit:'g')}</div><div class="err" id="er"></div><button id="sv" style="width:100%">${it?'Save':'Add item'}</button>${it?'<button class="r" id="rm" style="width:100%;margin-top:.4rem">Remove</button>':''}`);
@@ -248,7 +283,7 @@ function itemSheet(it){
 }
 const amt=i=>['g','ml','pcs'].includes(i.unit)?sizeText(i.qty,i.unit):`${q1(i.qty)} ${i.unit}`;
 const saveSet=(key,value)=>db.appSettings.put({key,value});
-async function loadPrefs(){await loadProfiles();await loadCorrections();const [p,s]=await Promise.all([db.appSettings.get('packs'),db.appSettings.get('staples')]);setPrefs({packs:p?.value||{},staples:s?.value||[]})}
+async function loadPrefs(){await Promise.all([loadProfiles(),loadCorrections(),habits.loadHabits(),loadOverrides()]);const [p,s]=await Promise.all([db.appSettings.get('packs'),db.appSettings.get('staples')]);setPrefs({packs:p?.value||{},staples:s?.value||[]})}
 function packSheet(name){
   const p=name?pkgFor({name,unit:'g'}):null;
   const big=p&&p.size>=1000&&p.size%1000===0&&(p.unit==='g'||p.unit==='ml');
@@ -273,6 +308,8 @@ async function renderSettings(){
   const staples=sv?.value||[],seen=new Map();
   for(const i of [...rs.flatMap(r=>r.ingredients),...pi,...gl]){const n=(i.name||'').toLowerCase();if(n&&!seen.has(n))seen.set(n,i.unit||'g')}
   const names=[...seen.keys()].filter(n=>!isStaple({name:n})).sort(),note=t=>`<div style="color:var(--mute);font-size:.88rem;margin:.1rem 0 .6rem">${t}</div>`;
+  const pst=await push.status(),dd=habits.daysSinceCheckin();
+  const remHtml=`<div class="acct"><div class="av">📅</div><div class="t"><b>${esc(dayLabel(habits.usualDays()))}</b><div class="s">Your usual days to plan and shop. Prepd starts with weekends and learns from you.</div></div></div><div class="acct"><div class="av">🧺</div><div class="t"><b>Pantry check-in</b><div class="s">${dd===null?'Not done yet':`Last done ${dd} day${dd===1?'':'s'} ago`}</div></div><button class="g" id="ckn">Check in now</button></div>${pst==='off'||pst==='on'?`<label class="tog"><div><b>Reminder notifications</b><div class="s">An occasional nudge on your usual days, at most twice a week. They stop when you plan.</div></div><input type="checkbox" id="pushtg" ${pst==='on'?'checked':''}></label>`:pst==='blocked'?'<div class="s" style="color:var(--mute);margin-bottom:.6rem">Notifications are blocked in your browser settings.</div>':pst==='unsupported'?'<div class="s" style="color:var(--mute);margin-bottom:.6rem">Notifications aren’t available here. On iPhone, add Prepd to your Home Screen first.</div>':''}`;
   const acct=!cloud.enabled?'<div class="acct"><div class="av">💾</div><div class="t"><b>Backup isn’t set up</b><div class="s">Your data is saved on this device only.</div></div></div>'
     :cloud.signedIn()?`<div class="acct"><div class="av">${esc((who()[0]||'?').toUpperCase())}</div><div class="t"><b>@${esc(who())}</b><div class="s">Backed up automatically ☁️</div></div></div><div class="f"><button class="g" id="so">Sign out</button><button class="r" id="da">Delete account</button></div>`
     :`<div class="acct"><div class="av">☁️</div><div class="t"><b>You’re not signed in</b><div class="s">${cloud.getError()?`<span style="color:var(--warn)">${esc(cloud.getError())}</span>`:'Create an account to back up your data and use it on other devices.'}</div></div></div><div class="f"><button id="su">Create account</button><button class="g" id="si">Sign in</button></div>${cloud.getError()?'<button class="g" id="retry" style="width:100%;margin-top:.5rem">Retry connection</button>':''}`;
@@ -281,12 +318,17 @@ async function renderSettings(){
      return `<button class="row" data-p="${esc(n)}"><div class="t"><b>${esc(n)}</b><div class="s">${p?`1 ${esc(p.n)} = ${sizeText(p.size,p.unit)}${p.custom?' · yours':''}`:'Bought by count · tap to set a pack'}</div></div><span style="color:var(--mute)">›</span></button>`}).join('')
     :'<div class="empty" data-e="🧺"><b>No ingredients yet</b>Add a meal and its ingredients show up here.</div>')+
    `<button class="g" data-p="" style="width:100%;margin:.2rem 0 .8rem">+ Other item</button></details><h4>Always-available staples</h4>${note('Never added to Grocery or taken from the pantry. Separate several with commas.')}<div><span class="chip">water</span><span class="chip">ice</span>${staples.map(x=>`<span class="chip">${esc(x)}<button data-rs="${esc(x)}" aria-label="Remove ${esc(x)}">✕</button></span>`).join('')}</div><div class="f" style="margin:.4rem 0 1rem"><input id="st" placeholder="e.g. salt, cooking oil" style="margin:0"><button id="addst" style="flex:none">Add</button></div>
+   <h4>Reminders</h4>${remHtml}
    <h4>Account</h4>${acct}
    <label class="tog"><div><b>Share recipes anonymously</b><div class="s">Helps everyone get more accurate ingredients. Never includes your name or pantry.</div></div><input type="checkbox" id="shr" ${sh0?'checked':''}></label>`;
   $('#pk').ontoggle=e=>{packsOpen=e.target.open};
   $('#shr').onchange=e=>saveSet('cloud_share',e.target.checked);
+  const pt=$('#pushtg');if(pt)pt.onchange=async e=>{
+    const on=e.target.checked;
+    try{on?await push.enable():await push.disable();toast(on?'Reminders on':'Reminders off')}catch(x){e.target.checked=!on;toast(x.message)}};
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
     if('p'in d)packSheet(d.p);
+    if(b.id==='ckn')checkinSheet();
     if(b.id==='retry'){busy(b,1,'Connecting…');await cloud.init();render()}
     if(b.id==='su')authSheet('signup',{done:()=>render()});
     if(b.id==='si')authSheet('signin');
@@ -408,15 +450,36 @@ async function maybeWelcome(){
 }
 async function renderGrocery(){
   const g=await db.groceryList.toArray();head('Grocery',g.length?`${g.length} to buy`:'');
-  m.innerHTML=(g.length?g.map(i=>`<div class="row" data-row="${i.id}"><button class="chk" data-buy="${i.id}" aria-label="Mark ${esc(i.name)} bought"></button><span class="em sm">${emojiFor(i.name)}</span><div class="t"><b>${esc(groceryText(i).title)}</b><div class="s">${esc(groceryText(i).sub)}</div></div><button class="r" data-x="${i.id}" style="padding:.4rem">✕</button></div>`).join('')
-   :'<div class="empty" data-e="🛒"><b>Nothing to buy</b>Meals you plan add missing ingredients here.</div>')+'<button class="fab" data-new aria-label="Add item">+</button>';
+  const row=i=>{
+    const t=groceryText(i),food=i.food!==false;
+    return `<div class="row" data-row="${i.id}"><button class="chk" data-buy="${i.id}" aria-label="Mark ${esc(i.name)} bought"></button><span class="em sm">${food?emojiFor(i.name):'🛍️'}</span><div class="t"><b>${esc(t.title)}</b><div class="s">${esc(t.sub)}</div>${i.auto?'':`<button class="tag" data-food="${i.id}">${food?'🧺 Goes to pantry':'🧻 Not food · stays off pantry'}</button>`}</div><button class="r" data-x="${i.id}" style="padding:.4rem">✕</button></div>`};
+  m.innerHTML=(g.length?g.map(row).join(''):'<div class="empty" data-e="🛒"><b>Nothing to buy</b>Meals you plan add missing ingredients here.</div>')+'<button class="fab" data-new aria-label="Add item">+</button>';
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
-    if(d.buy||d.x){const row=$(`[data-row="${d.buy||d.x}"]`);if(d.buy){b.classList.add('on');b.textContent='✓';burst(b);await new Promise(r=>setTimeout(r,220));await restockFromGrocery(+d.buy);toast('Moved to pantry')}else await db.groceryList.delete(+d.x);
-      row.classList.add('gone');setTimeout(render,200)}
-    if('new'in d){const sh=sheet(`<h3>Add to list</h3><input id="nm" placeholder="Name"><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount">${unitSel('u','g')}</div><div class="err" id="er"></div><button id="sv" style="width:100%">Add to list</button>`);
-      sh.el.onclick=async ev=>{if(ev.target.id!=='sv')return;const name=sh.q('#nm').value.trim(),qty=+sh.q('#q').value,unit=sh.q('#u').value;
-        if(!name||!(qty>0)||!UNITS.includes(unit))return sh.q('#er').textContent='Enter a name, an amount, and unit g, ml, pcs, tsp, tbsp or cup.';
-        await db.groceryList.add({name,qty,unit,checked:0});sh.close();render()}}};
+    if(d.food){                                           // the user corrects the food / not-food guess; it is remembered
+      const it=await db.groceryList.get(+d.food),now=!(it.food!==false);
+      await db.groceryList.update(it.id,{food:now});await setOverride(it.name,now);render();return}
+    if(d.buy||d.x){const rowEl=$(`[data-row="${d.buy||d.x}"]`);
+      if(d.buy){b.classList.add('on');b.textContent='✓';burst(b);await new Promise(r=>setTimeout(r,220));
+        const r=await restockFromGrocery(+d.buy);habits.record('grocery').catch(()=>{});toast(r&&r.pantry===false?'Checked off ✓':'Moved to pantry')}
+      else await db.groceryList.delete(+d.x);
+      rowEl.classList.add('gone');setTimeout(render,200)}
+    if('new'in d){
+      const known=await loadKnown();
+      const sh=sheet(`<h3>Add to list</h3><input id="nm" placeholder="Name, e.g. milk or napkins" autocomplete="off"><div class="uh" id="fh"></div><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount">${unitSel('u','g')}</div><div class="err" id="er"></div><button id="sv" style="width:100%">Add to list</button>`);
+      let t;sh.el.oninput=ev=>{                           // live hint: Prepd works out food vs not food by itself
+        if(ev.target.id!=='nm')return;clearTimeout(t);
+        t=setTimeout(()=>{const v=ev.target.value.trim(),fh=sh.q('#fh');if(!fh)return;
+          if(!v){fh.textContent='';return}
+          const c=classifyFast(v,known);fh.className='uh '+(c.food?'ok':'');
+          fh.textContent=c.food?'🧺 Food · goes to your pantry when bought':'🧻 Looks like a non-food item · stays off your pantry'},150)};
+      sh.el.onclick=async ev=>{if(ev.target.id!=='sv')return;
+        const name=sh.q('#nm').value.trim(),qty=+sh.q('#q').value,unit=sh.q('#u').value;
+        if(!name||!(qty>0)||!UNITS.includes(unit))return sh.q('#er').textContent='Enter a name and an amount greater than 0.';
+        const c=classifyFast(name,known);                  // stages 0–2, instant
+        const id=await db.groceryList.add({name,qty,unit:!c.food&&(unit==='g'||unit==='ml')?'pcs':unit,checked:0,food:c.food,why:c.why});
+        sh.close();render();
+        if(!c.food)classifyCommunity(name).then(async f=>{   // stage 3 in the background: any saved recipe on the platform?
+          if(f===true){await db.groceryList.update(id,{food:true,why:'saved recipes'});if(!sheetStack.length&&tab==='grocery')render()}})}}};
 }
 // Earlier versions kept a stale capacity when a unit changed (4900 g -> 4.9 kg left capacity 4900), which made the bar
 // read as empty. Repair those items once.
@@ -429,6 +492,12 @@ const offline=()=>$('#ob').classList.toggle('on',!navigator.onLine);
 addEventListener('online',offline);addEventListener('offline',offline);
 let gBadge=0;
 const drawNav=()=>{$('#n').innerHTML=[['plan','Plan'],['pantry','Pantry'],['grocery','Grocery'],['settings','Settings']].map(([k,l])=>`<button data-t="${k}" class="${k===tab?'on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>${l}${k==='grocery'&&gBadge?`<span class="bd">${gBadge}</span>`:''}</button>`).join('')};
+// Opening a link like #checkin (from a reminder) goes straight to that screen.
+function goHash(h){
+  const k=String(h||'').replace(/^.*#/,'');
+  if(k==='checkin'){tab='pantry';render().then(()=>checkinSheet())}
+  else if(['plan','pantry','grocery','settings'].includes(k)){tab=k;render()}
+}
 async function render(){
   const t0=performance.now();
   drawNav();                                   // the tab bar responds immediately
@@ -449,10 +518,11 @@ offline();
   m.classList.add('stagger');setTimeout(()=>m.classList.remove('stagger'),600);
   setOnBackup(async snap=>{if(cloud.isReady())await cloud.push(snap)});
   await safeRender();timers.resume();drawTimers();
+  if(location.hash)goHash(location.hash);
   // Everything below happens after the first screen is already visible.
   loadEngine().then(()=>{healPantry().then(c=>c&&render());return syncSoon()});
-  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!sheetStack.length){if(!db.isOpen())db.open().catch(()=>{});safeRender()}});
-  cloud.init().then(async ok=>{if(!ok)return;
+  document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!sheetStack.length){cloud.touchOpen();if(!db.isOpen())db.open().catch(()=>{});safeRender()}});
+  cloud.init().then(async ok=>{if(!ok)return;cloud.touchOpen();
     const r=await cloud.pullIfNewer(importUserData);
     if(r==='pulled'){await loadPrefs();render()}else if(r==='dirty')cloud.push(await exportUserData());
     if(tab==='settings')render()}).catch(()=>{});
@@ -460,6 +530,6 @@ offline();
     const hadController=!!navigator.serviceWorker.controller;let reloading=false;   // a new version took over: restart once so the app isn't a mix of old and new files
     navigator.serviceWorker.addEventListener('controllerchange',()=>{if(hadController&&!reloading){reloading=true;location.reload()}});
     navigator.serviceWorker.register('sw.js',{updateViaCache:'none'}).then(async r=>{try{await r.periodicSync?.register('shortage-check',{minInterval:36e5})}catch{}});
-    navigator.serviceWorker.addEventListener('message',e=>e.data==='check-shortages'&&checkUpcomingMenuShortages(48))}
+    navigator.serviceWorker.addEventListener('message',e=>{if(e.data==='check-shortages')checkUpcomingMenuShortages(48).catch(()=>{});else if(e.data&&e.data.go)goHash(e.data.go)})}
   setInterval(()=>checkUpcomingMenuShortages(48).catch(()=>{}),36e5);
 })();
