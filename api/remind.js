@@ -27,11 +27,12 @@ module.exports=async(req,res)=>{
     const out=[];let sent=0;
     for(const [uid,list] of byUser){
       const data=dataOf.get(uid)||{},habits=((data.settings||[]).find(x=>x.key==='habits')||{}).value||{};
+      const kitchenOn=(((data.settings||[]).find(x=>x.key==='features')||{}).value||{}).kitchen!==false;   // pantry switched off: planning reminders only
       const tz=habits.tz||list[0].tz||'UTC',st=stateOf.get(uid)||{sent:[],ignored:0,counted:0,last_open:0};
       const today=dateKey(now,tz),soon=new Set([0,1,2].map(i=>dateKey(now+i*864e5,tz)));
       const upcoming3=(data.mealPlans||[]).filter(p=>!p.logged&&soon.has(p.date)).length;
       const {ignored,counted}=settleIgnored({sent:st.sent,ignored:st.ignored,counted:st.counted},st.last_open,now);
-      const d=decide({h:{...habits,rem:{sent:st.sent,ignored}},now,tz,upcoming3,pantryCount:(data.pantryItems||[]).length,mode:'push'});
+      const d=decide({h:{...habits,rem:{sent:st.sent,ignored}},now,tz,upcoming3,pantryCount:kitchenOn?(data.pantryItems||[]).length:0,mode:'push'});
       const item={user:uid.slice(0,8),tz,today,upcoming3,send:d.send,why:d.why||d.type};
       if(d.send&&!dry){
         const payload=JSON.stringify({title:d.title,body:d.body,url:d.url,tag:'prepd-reminder'});

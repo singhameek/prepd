@@ -133,7 +133,7 @@ export async function checkUpcomingMenuShortages(forecastHours=24,{addToGrocery=
   }
   shortages.changed=false;
   if(addToGrocery){
-    const open=(await db.groceryList.toArray()).filter(g=>!g.checked),byName=new Map(),keep=new Set(),adds=[],puts=[],dels=[];
+    const open=(await db.groceryList.toArray()).filter(g=>!g.checked&&!g.basic),byName=new Map(),keep=new Set(),adds=[],puts=[],dels=[];
     for(const g of open){const k=nk(g.name);if(byName.has(k))dels.push(g.id);else byName.set(k,g)}   // duplicates from older versions
     for(const s of shortages){
       const k=nk(s.name);keep.add(k);
@@ -171,9 +171,9 @@ export function convertMetricToFractionalUI(remainingQuantity,totalCapacity){
   const t=Math.round(r*10);return t===10?'full':`~${t}/10ths full`;
 }
 
-export async function restockFromGrocery(id){
+export async function restockFromGrocery(id,opts={}){
   const g=await db.groceryList.get(id);if(!g)return {pantry:false};
-  if(g.food===false){await db.groceryList.delete(id);return {pantry:false}}   // napkins, soap…: tick it off, nothing goes in the pantry
+  if(g.food===false||opts.skipPantry){await db.groceryList.delete(id);return {pantry:false}}   // napkins, soap…: tick it off, nothing goes in the pantry
   // Bought packages add the full package amount; manual items add the exact amount.
   const pk=g.pkg&&g.packs,un=pk?(g.pkg.unit||baseUnit(g.unit)):g.unit,amt=pk?g.pkg.size*g.packs:g.qty;
   await db.transaction('rw',db.groceryList,db.pantryItems,async()=>{

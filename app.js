@@ -1,4 +1,4 @@
-import {db,today,requestPersistence,autoRestore,setOnBackup,exportUserData,importUserData} from './db.js';
+import {db,today,requestPersistence,autoRestore,setOnBackup,exportUserData,importUserData,scheduleAutoBackup} from './db.js';
 import {parseIngredients,reprice} from './ingredientParser.js';
 import {findRecipe} from './recipeFinder.js';
 import * as cloud from './cloud.js';
@@ -27,12 +27,19 @@ let tab='plan',sel=today();
 const reduce=matchMedia('(prefers-reduced-motion:reduce)').matches;
 const PERF=/[?&]perf\b/.test(location.search);   // open the app with ?perf to log how long each screen takes
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+// "Pantry & recipes" can be switched off (Settings, or the first-run setup). Prepd is then a plain meal planner and
+// shopping list: no pantry, no recipe finder, no ingredients, and meals and groceries never touch each other.
+let KITCHEN=true;
+async function setKitchen(on){
+  KITCHEN=on;await db.appSettings.put({key:'features',value:{kitchen:on}});scheduleAutoBackup();
+  if(on)loadEngine().then(()=>{healPantry().then(c=>c&&tab==='pantry'&&render());syncSoon()});
+}
 // iOS Safari has no Notification object (touching it throws), so every use goes through these.
 const notifState=()=>typeof Notification!=='undefined'?Notification.permission:'denied';
 const askNotif=()=>{try{if(notifState()==='default')Notification.requestPermission()}catch{}};
 const pop=(el,dx=0)=>!reduce&&el.animate([{opacity:0,transform:`translateX(${dx}px) translateY(${dx?0:10}px)`},{opacity:1,transform:'none'}],{duration:200,easing:'cubic-bezier(.2,.9,.3,1)'});
 const EMO=[[/potato|aloo/,'🥔'],[/onion|shallot|scallion/,'🧅'],[/tomato/,'🍅'],[/garlic/,'🧄'],[/ginger/,'🫚'],[/chil+i|capsicum|jalape/,'🌶️'],[/carrot/,'🥕'],[/cauliflower|broccoli|gobi/,'🥦'],[/spinach|palak|kale|lettuce|cabbage|coriander|cilantro|mint|basil|parsley|curry leaf|curry leaves|methi/,'🥬'],[/cucumber|zucchini|courgette/,'🥒'],[/eggplant|brinjal|aubergine|baingan/,'🍆'],[/corn/,'🌽'],[/mushroom/,'🍄'],[/peas|bean|lentil|\bdal\b|chana|rajma|chickpea|moong|toor|urad/,'🫘'],[/rice|poha/,'🍚'],[/atta|flour|maida|besan|semolina|rava|bread|roti|naan/,'🌾'],[/pasta|noodle|spaghetti/,'🍝'],[/milk|cream/,'🥛'],[/curd|yogh?urt|dahi/,'🥣'],[/paneer|cheese/,'🧀'],[/butter|ghee/,'🧈'],[/\beggs?\b/,'🥚'],[/chicken|turkey/,'🍗'],[/beef|mutton|lamb|pork|meat|bacon/,'🥩'],[/fish|salmon|tuna|prawn|shrimp/,'🐟'],[/\boil\b/,'🫒'],[/sugar|jaggery|honey/,'🍯'],[/\bsalt\b/,'🧂'],[/lemon|lime/,'🍋'],[/apple/,'🍎'],[/banana/,'🍌'],[/mango/,'🥭'],[/coconut/,'🥥'],[/nut|almond|cashew|peanut|walnut/,'🥜'],[/\btea\b|coffee/,'☕'],[/cumin|jeera|turmeric|haldi|masala|spice|cardamom|cinnamon|clove|mustard|pepper|powder|seed/,'🌶️']];
-const emojiFor=n=>{n=String(n).toLowerCase();for(const [r,e] of EMO)if(r.test(n))return e;return '🥘'};
+const emojiFor=(n,fb='🥘')=>{n=String(n).toLowerCase();for(const [r,e] of EMO)if(r.test(n))return e;return fb};
 // A little confetti of ingredients, for happy moments.
 function burst(el){
   if(reduce||!el)return;
@@ -48,12 +55,13 @@ const SEED=Math.floor(Math.random()*1000);   // a different greeting each time t
 function helloCard(todayPlans,groceryN,eaten,planned,nudge,checkDue){
   const h=new Date().getHours(),meal=h<11?'breakfast':h<16?'lunch':'dinner',done=new Set(todayPlans.map(p=>p.slot));
   const qs=[`What’s for ${meal} today?`,'Anything tasty on the menu?','Ready to prep something delicious?','Hungry yet? Let’s plan it.','Craving something new today?',`How about a ${meal} you’ll love?`,'What are we cooking next?','Your kitchen is ready when you are.'];
-  const line=done.size>=3?['Today’s fully planned. Nicely done! 🎉','Breakfast, lunch and dinner sorted. Chef’s kiss 👌'][SEED%2]:groceryN>=4?`Your grocery list has ${groceryN} items. Shopping day? 🛒`:qs[SEED%qs.length];
+  const shopDay=habits.usualDays().includes(weekdayOf(Date.now(),habits.get().tz));
+  const line=done.size>=3?['Today’s fully planned. Nicely done! 🎉','Breakfast, lunch and dinner sorted. Chef’s kiss 👌'][SEED%2]:(groceryN>=4||(shopDay&&groceryN>=1))?`Grocery time? ${groceryN} thing${groceryN>1?'s':''} on your list 🛒`:qs[SEED%qs.length];
   const wdName=dayName(weekdayOf(Date.now(),habits.get().tz));
   const line2=nudge&&nudge.send?(nudge.type==='checkin'?'A quick pantry check-in keeps everything accurate 🧺':`It’s ${wdName}, one of your usual planning days. Ready to plan the week? 🗓️`):line;
   const next=!done.has(meal)?meal:SLOTS.map(s=>s[0]).find(k=>!done.has(k));
   const chips=[next?`<button class="cp" data-chipadd="${next}">${SLOTS.find(s=>s[0]===next)[3]} Plan ${next}</button>`:'',
-    checkDue?`<button class="cp" data-ck="1">🧺 Pantry check-in</button>`:`<button class="cp" data-go="pantry">🧺 Pantry</button>`,`<button class="cp" data-go="grocery">🛒 Grocery${groceryN?` (${groceryN})`:''}</button>`,
+    !KITCHEN?'':checkDue?`<button class="cp" data-ck="1">🧺 Pantry check-in</button>`:`<button class="cp" data-go="pantry">🧺 Pantry</button>`,`<button class="cp" data-go="grocery">🛒 Grocery${groceryN?` (${groceryN})`:''}</button>`,
     cloud.enabled&&!cloud.signedIn()?`<button class="cp" data-acct="1">☁️ Back up my data</button>`:'',
     nudge&&nudge.send?`<button class="cp ghost" data-dismiss="1">Not now</button>`:''].join('');
   const pct=planned?Math.min(100,Math.round(eaten/planned*100)):0;
@@ -89,15 +97,15 @@ async function renderPlan(dx=0){
   const recs=new Map(allRecipes.map(r=>[r.id,r]));
   const dayPlans=plans.filter(p=>p.date===sel&&recs.has(p.recipeId));
   const total=dayPlans.reduce((a,p)=>a+kcal(recs.get(p.recipeId),planScale(p,recs.get(p.recipeId))),0);
-  head(sel===today()?'Today':fmt(sel,{weekday:'long'}),fmt(sel,{day:'numeric',month:'long'})+(total?` · ${total.toLocaleString()} kcal planned`:''));
+  head(sel===today()?'Today':fmt(sel,{weekday:'long'}),fmt(sel,{day:'numeric',month:'long'})+(KITCHEN&&total?` · ${total.toLocaleString()} kcal planned`:''));
   const tp=todayRows.filter(p=>recs.has(p.recipeId));
   const kc=a=>a.reduce((n,p)=>n+kcal(recs.get(p.recipeId),planScale(p,recs.get(p.recipeId))),0);
-  const nudge=habits.nudge({upcoming3:next3.filter(p=>!p.logged&&recs.has(p.recipeId)).length,pantryCount:pantryN});
-  const hello=helloCard(tp,gN,kc(tp.filter(p=>p.logged)),kc(tp),nudge,habits.checkinDue(pantryN));
+  const nudge=habits.nudge({upcoming3:next3.filter(p=>!p.logged&&recs.has(p.recipeId)).length,pantryCount:KITCHEN?pantryN:0});
+  const hello=helloCard(tp,gN,KITCHEN?kc(tp.filter(p=>p.logged)):0,KITCHEN?kc(tp):0,nudge,KITCHEN&&habits.checkinDue(pantryN));
   m.innerHTML=hello+`<div class="wk"><button class="n" data-wk="-7" aria-label="Previous week">‹</button>${days.map(d=>`<button class="d ${d===sel?'sel':''} ${d===today()?'t':''}" data-d="${d}"><span>${fmt(d,{weekday:'short'})}</span><b>${+d.slice(8)}</b><i class="${plans.some(p=>p.date===d)?'on':''}"></i></button>`).join('')}<button class="n" data-wk="7" aria-label="Next week">›</button></div><div id="body">${SLOTS.map(([k,l,c,em])=>{
     const ps=dayPlans.filter(x=>x.slot===k);
     return ps.map(p=>{const r=recs.get(p.recipeId);
-      return `<button class="slot" style="--c:var(${c})" data-meal="${p.id}"><span class="em">${em}</span><div class="t"><div class="l">${l}</div><div class="nm">${esc(r.name)}</div><div class="l">${kcal(r,planScale(p,r))} kcal</div></div>${p.logged?'<span class="ok">✓ Eaten</span>':''}</button>`}).join('')+
+      return `<button class="slot" style="--c:var(${c})" data-meal="${p.id}"><span class="em">${em}</span><div class="t"><div class="l">${l}</div><div class="nm">${esc(r.name)}</div>${KITCHEN&&kcal(r,planScale(p,r))>0?`<div class="l">${kcal(r,planScale(p,r))} kcal</div>`:''}</div>${p.logged?`<span class="ok">✓ ${KITCHEN?'Eaten':'Done'}</span>`:''}</button>`}).join('')+
     (ps.length?`<button class="more" style="--c:var(${c})" data-add="${k}">+ Add another ${l.toLowerCase()}</button>`
     :`<button class="slot e" style="--c:var(${c})" data-add="${k}"><span class="em">${em}</span><div class="t"><div class="l">${l}</div><div class="nm">What’s cooking?</div></div><span class="plus">+</span></button>`)}).join('')}</div>`;
   if(dx)pop($('#body'),dx*24);
@@ -117,6 +125,7 @@ async function renderPlan(dx=0){
 // first, then this runs in the background (including any network lookups) and redraws again only if something changed.
 let syncBusy=false,syncAgain=false;
 async function syncSoon(){
+  if(!KITCHEN)return null;                                    // simple planner: nothing links meals to groceries
   if(syncBusy){syncAgain=true;return null}
   syncBusy=true;let last=null;
   try{
@@ -138,7 +147,45 @@ async function plan(slot,recipeId,portions=1){
   render();                                                   // show the new meal straight away
   syncSoon().then(r=>{if(r&&r.changed&&r.length)toast(`${r.length} item${r.length>1?'s':''} on your Grocery list`)});
 }
+// Simple planner: a meal is just a name.
+async function basicAddSheet(slot){
+  const label=SLOTS.find(s=>s[0]===slot)[1].toLowerCase(),seen=new Set(),recent=[];
+  for(const r of (await db.recipes.toArray()).reverse()){const k=r.name.trim().toLowerCase();if(!seen.has(k)){seen.add(k);recent.push(r)}if(recent.length>=8)break}
+  const sh=sheet(`<h3>Add ${label}</h3><input id="nm" placeholder="What are you having?" autocomplete="off"><div class="err" id="er"></div><button id="go" style="width:100%">Add</button>${recent.length?`<h4>Recent meals</h4><div class="chips">${recent.map(r=>`<button class="cp" data-r="${r.id}">${esc(r.name)}</button>`).join('')}</div>`:''}`);
+  sh.el.onkeydown=e=>{if(e.key==='Enter')sh.q('#go').click()};
+  sh.el.onclick=async e=>{
+    const b=e.target.closest('button');if(!b)return;
+    if(b.dataset.r){sh.close();plan(slot,+b.dataset.r,1);return}
+    if(b.id!=='go')return;
+    const name=sh.q('#nm').value.trim();if(!name)return sh.q('#er').textContent='Give your meal a name.';
+    const same=(await db.recipes.toArray()).find(r=>r.name.trim().toLowerCase()===name.toLowerCase());
+    const id=same?same.id:await db.recipes.add({name,ingredients:[],servings:1,basic:true,steps:[]});
+    sh.close();plan(slot,id,1);
+  };
+}
+async function basicMealSheet(id){
+  const p=await db.mealPlans.get(id),r=p&&await db.recipes.get(p.recipeId);if(!r)return;
+  const sh=sheet(`<h3>Edit meal</h3><input id="nm" value="${esc(r.name)}"><div class="err" id="er"></div><div class="f"><button id="sv">Save</button>${p.logged?'':'<button class="g" id="eat">Mark done ✓</button>'}</div><button class="r" id="rm" style="width:100%;margin-top:.4rem">Remove from plan</button>`);
+  sh.el.onkeydown=e=>{if(e.key==='Enter')sh.q('#sv').click()};
+  sh.el.onclick=async e=>{
+    const b=e.target.closest('button');if(!b)return;
+    if(b.id==='rm'){await db.mealPlans.delete(id);sh.close();render()}
+    if(b.id==='eat'){await db.mealPlans.update(id,{logged:1});burst(b);sh.close();toast('Done ✓');render()}
+    if(b.id==='sv'){const name=sh.q('#nm').value.trim();if(!name)return sh.q('#er').textContent='Give your meal a name.';await db.recipes.update(r.id,{name});sh.close();render()}
+  };
+}
+function basicGrocerySheet(){
+  const sh=sheet(`<h3>Add to list</h3><input id="nm" placeholder="What do you need?" autocomplete="off"><input id="nt" placeholder="Amount (optional), e.g. 2 packs" autocomplete="off"><div class="err" id="er"></div><button id="sv" style="width:100%">Add</button>`);
+  sh.el.onkeydown=e=>{if(e.key==='Enter')sh.q('#sv').click()};
+  sh.el.onclick=async e=>{
+    if(e.target.id!=='sv')return;
+    const name=sh.q('#nm').value.trim(),note=sh.q('#nt').value.trim();
+    if(!name)return sh.q('#er').textContent='What do you need?';
+    await db.groceryList.add({name,note,qty:1,unit:'pcs',checked:0,food:false,basic:true});sh.close();render();
+  };
+}
 async function addSheet(slot){
+  if(!KITCHEN)return basicAddSheet(slot);
   const label=SLOTS.find(s=>s[0]===slot)[1].toLowerCase(),saved=await db.recipes.toArray();
   const sh=sheet(`<h3>Add ${label}</h3><input id="nm" placeholder="Meal name, e.g. Paneer butter masala" autocomplete="off"><button class="g" id="find" style="width:100%;margin-bottom:.8rem">🔎 Find recipe online</button><textarea id="tx" placeholder="…or paste ingredients, one per line&#10;2 eggs&#10;a splash of milk"></textarea><details class="fold" style="margin:.2rem 0 .8rem"><summary>Steps <span class="s" style="font-weight:500">optional</span></summary><textarea id="stx" placeholder="One step per line, e.g.&#10;Heat oil and add cumin.&#10;Simmer for 10 minutes." style="min-height:7rem"></textarea></details><div class="f" style="align-items:center"><span>This dish serves</span><input id="sr" type="number" min="1" step="1" value="1" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="pp" type="number" min="0.5" step="0.5" value="1" style="margin:0"></div><div class="err" id="er"></div><button id="go" style="width:100%">Add meal</button>${saved.length?`<h4>Saved meals</h4>${saved.map(r=>`<div class="row" data-row="${r.id}"><button class="r" data-r="${r.id}" style="flex:1;text-align:left;color:var(--ink);padding:0"><b>${esc(r.name)}</b><div class="s">${kcal(r)} kcal · tap to add</div></button><button class="r" data-del="${r.id}" style="padding:.4rem .6rem">Delete</button></div>`).join('')}`:''}`);
   const body=sh.q('.sb'),mainHTML=body.innerHTML;let rv,stash={};
@@ -182,6 +229,7 @@ async function addSheet(slot){
 }
 // Weekly pantry check-in: a quick pass to keep the pantry honest. Untouched items stay as they are.
 async function checkinSheet(){
+  if(!KITCHEN)return;
   const items=(await db.pantryItems.toArray()).sort((a,b)=>a.name.localeCompare(b.name));
   if(!items.length)return toast('Your pantry is empty. Add a few items first.');
   const st=new Map();
@@ -238,6 +286,7 @@ addEventListener('prepd-timer-done',async e=>{
     reg?reg.showNotification('Timer done',o):new Notification('Timer done',o)}catch{}}
 });
 async function mealSheet(id){
+  if(!KITCHEN)return basicMealSheet(id);
   const p=await db.mealPlans.get(id),r=await db.recipes.get(p.recipeId);
   const steps0=r.steps?.length?r.steps:(r.instructions||[]);
   const sh=sheet(`<h3>Edit meal</h3><input id="nm" value="${esc(r.name)}"><textarea id="tx">${esc(r.text||'')}</textarea><div class="f" style="align-items:center"><span>This dish serves</span><input id="sr" type="number" min="1" step="1" value="${r.servings||1}" style="margin:0"></div><div class="f" style="align-items:center;margin:.5rem 0 .8rem"><span>My portions</span><input id="pp" type="number" min="0.5" step="0.5" value="${p.portions??(p.scale||1)*(r.servings||1)}" style="margin:0"></div><div class="err" id="er"></div>
@@ -251,10 +300,10 @@ async function mealSheet(id){
     if(b.id==='dm'&&await confirmDel(b)){await delRecipe(r.id);sh.close();toast('Meal deleted');render();syncSoon()}
     if(b.id==='eat'){const {missing}=await deductIngredientsFromPantry(r.id,planScale(p,r));await db.mealPlans.update(id,{logged:1});burst(b);sh.close();toast(missing.length?`Logged. Pantry was short on ${missing[0].name}`:'Logged. Pantry updated 🎉');render();syncSoon()}
     if(b.id==='sv'){const name=sh.q('#nm').value.trim(),text=sh.q('#tx').value.trim(),er=sh.q('#er');
-      if(!name||!text)return er.textContent='Name and ingredients can’t be empty.';
+      if(!name||(!text&&r.ingredients.length))return er.textContent='Name and ingredients can’t be empty.';
       busy(b,1,'Saving…');
       const serves=Math.max(1,Math.round(+sh.q('#sr').value)||1),portions=Math.max(.25,+sh.q('#pp').value||1);
-      try{const ch={name,servings:serves,steps:splitSteps(sh.q('#stx').value)};if(text!==r.text){ch.text=text;ch.ingredients=await parseIngredients(text)}
+      try{const ch={name,servings:serves,steps:splitSteps(sh.q('#stx').value)};if(text&&text!==r.text){ch.text=text;ch.ingredients=await parseIngredients(text)}
         await db.recipes.update(r.id,ch);await db.mealPlans.update(id,{portions});sh.close();toast('Saved');render();syncSoon()}
       catch(x){er.textContent=x.message;busy(b,0,'Save changes')}}};
 }
@@ -283,7 +332,7 @@ function itemSheet(it){
 }
 const amt=i=>['g','ml','pcs'].includes(i.unit)?sizeText(i.qty,i.unit):`${q1(i.qty)} ${i.unit}`;
 const saveSet=(key,value)=>db.appSettings.put({key,value});
-async function loadPrefs(){await Promise.all([loadProfiles(),loadCorrections(),habits.loadHabits(),loadOverrides()]);const [p,s]=await Promise.all([db.appSettings.get('packs'),db.appSettings.get('staples')]);setPrefs({packs:p?.value||{},staples:s?.value||[]})}
+async function loadPrefs(){await Promise.all([loadProfiles(),loadCorrections(),habits.loadHabits(),loadOverrides()]);const [p,s,f]=await Promise.all([db.appSettings.get('packs'),db.appSettings.get('staples'),db.appSettings.get('features')]);setPrefs({packs:p?.value||{},staples:s?.value||[]});KITCHEN=f?.value?.kitchen!==false}
 function packSheet(name){
   const p=name?pkgFor({name,unit:'g'}):null;
   const big=p&&p.size>=1000&&p.size%1000===0&&(p.unit==='g'||p.unit==='ml');
@@ -303,25 +352,33 @@ function packSheet(name){
 }
 let packsOpen=false;
 async function renderSettings(){
-  head('Settings','Account, pack sizes and staples');
+  head('Settings',KITCHEN?'Account, pack sizes and staples':'Account and reminders');
   const [rs,pi,gl,sv,sh0]=await Promise.all([db.recipes.toArray(),db.pantryItems.toArray(),db.groceryList.toArray(),db.appSettings.get('staples'),shareOn()]);
   const staples=sv?.value||[],seen=new Map();
   for(const i of [...rs.flatMap(r=>r.ingredients),...pi,...gl]){const n=(i.name||'').toLowerCase();if(n&&!seen.has(n))seen.set(n,i.unit||'g')}
   const names=[...seen.keys()].filter(n=>!isStaple({name:n})).sort(),note=t=>`<div style="color:var(--mute);font-size:.88rem;margin:.1rem 0 .6rem">${t}</div>`;
   const pst=await push.status(),dd=habits.daysSinceCheckin();
-  const remHtml=`<div class="acct"><div class="av">📅</div><div class="t"><b>${esc(dayLabel(habits.usualDays()))}</b><div class="s">Your usual days to plan and shop. Prepd starts with weekends and learns from you.</div></div></div><div class="acct"><div class="av">🧺</div><div class="t"><b>Pantry check-in</b><div class="s">${dd===null?'Not done yet':`Last done ${dd} day${dd===1?'':'s'} ago`}</div></div><button class="g" id="ckn">Check in now</button></div>${pst==='off'||pst==='on'?`<label class="tog"><div><b>Reminder notifications</b><div class="s">An occasional nudge on your usual days, at most twice a week. They stop when you plan.</div></div><input type="checkbox" id="pushtg" ${pst==='on'?'checked':''}></label>`:pst==='blocked'?'<div class="s" style="color:var(--mute);margin-bottom:.6rem">Notifications are blocked in your browser settings.</div>':pst==='unsupported'?'<div class="s" style="color:var(--mute);margin-bottom:.6rem">Notifications aren’t available here. On iPhone, add Prepd to your Home Screen first.</div>':''}`;
+  const remHtml=`<div class="acct"><div class="av">📅</div><div class="t"><b>${esc(dayLabel(habits.usualDays()))}</b><div class="s">Your usual days to plan and shop. Prepd starts with weekends and learns from you.</div></div></div><div class="collapsible kw ${KITCHEN?'':'shut'}"><div><div class="acct"><div class="av">🧺</div><div class="t"><b>Pantry check-in</b><div class="s">${dd===null?'Not done yet':`Last done ${dd} day${dd===1?'':'s'} ago`}</div></div><button class="g" id="ckn">Check in now</button></div></div></div>${pst==='off'||pst==='on'?`<label class="tog"><div><b>Reminder notifications</b><div class="s">An occasional nudge on your usual days, at most twice a week. They stop when you plan.</div></div><input type="checkbox" class="sw" id="pushtg" ${pst==='on'?'checked':''}></label>`:pst==='blocked'?'<div class="s" style="color:var(--mute);margin-bottom:.6rem">Notifications are blocked in your browser settings.</div>':pst==='unsupported'?'<div class="s" style="color:var(--mute);margin-bottom:.6rem">Notifications aren’t available here. On iPhone, add Prepd to your Home Screen first.</div>':''}`;
   const acct=!cloud.enabled?'<div class="acct"><div class="av">💾</div><div class="t"><b>Backup isn’t set up</b><div class="s">Your data is saved on this device only.</div></div></div>'
     :cloud.signedIn()?`<div class="acct"><div class="av">${esc((who()[0]||'?').toUpperCase())}</div><div class="t"><b>@${esc(who())}</b><div class="s">Backed up automatically ☁️</div></div></div><div class="f"><button class="g" id="so">Sign out</button><button class="r" id="da">Delete account</button></div>`
     :`<div class="acct"><div class="av">☁️</div><div class="t"><b>You’re not signed in</b><div class="s">${cloud.getError()?`<span style="color:var(--warn)">${esc(cloud.getError())}</span>`:'Create an account to back up your data and use it on other devices.'}</div></div></div><div class="f"><button id="su">Create account</button><button class="g" id="si">Sign in</button></div>${cloud.getError()?'<button class="g" id="retry" style="width:100%;margin-top:.5rem">Retry connection</button>':''}`;
-  m.innerHTML=`<details class="fold" id="pk" ${packsOpen?'open':''}><summary>Pack sizes <span class="s" style="font-weight:500">${names.length} item${names.length===1?'':'s'}</span></summary>${note('Grocery lists round up to whole packs. Tap an item to set the size you buy.')}`+
+  const featCard=`<div class="feat"><span class="fem">🧺</span><div class="t"><b>Pantry &amp; recipes</b><div class="s" id="fsub">${KITCHEN?'Track your pantry, find recipes online, and build grocery lists from your meals.':'Off: a simple meal planner and shopping list. Your pantry and recipes are kept for later.'}</div></div><input type="checkbox" class="sw" id="kitchen" ${KITCHEN?'checked':''} aria-label="Pantry and recipes"></div>`;
+  m.innerHTML=featCard+`<div class="collapsible kw ${KITCHEN?'':'shut'}"><div><details class="fold" id="pk" ${packsOpen?'open':''}><summary>Pack sizes <span class="s" style="font-weight:500">${names.length} item${names.length===1?'':'s'}</span></summary>${note('Grocery lists round up to whole packs. Tap an item to set the size you buy.')}`+
    (names.length?names.map(n=>{const p=pkgFor({name:n,unit:seen.get(n)});
      return `<button class="row" data-p="${esc(n)}"><div class="t"><b>${esc(n)}</b><div class="s">${p?`1 ${esc(p.n)} = ${sizeText(p.size,p.unit)}${p.custom?' · yours':''}`:'Bought by count · tap to set a pack'}</div></div><span style="color:var(--mute)">›</span></button>`}).join('')
     :'<div class="empty" data-e="🧺"><b>No ingredients yet</b>Add a meal and its ingredients show up here.</div>')+
-   `<button class="g" data-p="" style="width:100%;margin:.2rem 0 .8rem">+ Other item</button></details><h4>Always-available staples</h4>${note('Never added to Grocery or taken from the pantry. Separate several with commas.')}<div><span class="chip">water</span><span class="chip">ice</span>${staples.map(x=>`<span class="chip">${esc(x)}<button data-rs="${esc(x)}" aria-label="Remove ${esc(x)}">✕</button></span>`).join('')}</div><div class="f" style="margin:.4rem 0 1rem"><input id="st" placeholder="e.g. salt, cooking oil" style="margin:0"><button id="addst" style="flex:none">Add</button></div>
+   `<button class="g" data-p="" style="width:100%;margin:.2rem 0 .8rem">+ Other item</button></details><h4>Always-available staples</h4>${note('Never added to Grocery or taken from the pantry. Separate several with commas.')}<div><span class="chip">water</span><span class="chip">ice</span>${staples.map(x=>`<span class="chip">${esc(x)}<button data-rs="${esc(x)}" aria-label="Remove ${esc(x)}">✕</button></span>`).join('')}</div><div class="f" style="margin:.4rem 0 1rem"><input id="st" placeholder="e.g. salt, cooking oil" style="margin:0"><button id="addst" style="flex:none">Add</button></div></div></div>
    <h4>Reminders</h4>${remHtml}
    <h4>Account</h4>${acct}
-   <label class="tog"><div><b>Share recipes anonymously</b><div class="s">Helps everyone get more accurate ingredients. Never includes your name or pantry.</div></div><input type="checkbox" id="shr" ${sh0?'checked':''}></label>`;
+   <label class="tog"><div><b>Share recipes anonymously</b><div class="s">Helps everyone get more accurate ingredients. Never includes your name or pantry.</div></div><input type="checkbox" class="sw" id="shr" ${sh0?'checked':''}></label>`;
   $('#pk').ontoggle=e=>{packsOpen=e.target.open};
+  $('#kitchen').onchange=async e=>{                              // responds at once; the sections below fold away or open smoothly
+    const on=e.target.checked;await setKitchen(on);
+    document.querySelectorAll('.kw').forEach(x=>x.classList.toggle('shut',!on));
+    $('#fsub').textContent=on?'Track your pantry, find recipes online, and build grocery lists from your meals.':'Off: a simple meal planner and shopping list. Your pantry and recipes are kept for later.';
+    head('Settings',on?'Account, pack sizes and staples':'Account and reminders');drawNav();
+    toast(on?'Pantry & recipes on':'Simple planner on · your pantry is kept for later');
+  };
   $('#shr').onchange=e=>saveSet('cloud_share',e.target.checked);
   const pt=$('#pushtg');if(pt)pt.onchange=async e=>{
     const on=e.target.checked;
@@ -377,7 +434,7 @@ function authSheet(mode='signup',opts={}){
 // Delete account: password first, then a second "are you sure".
 async function deleteFlow(){
   const c=await cloud.sharedCounts();
-  const sh=sheet(`<h3>Delete account</h3><div style="color:var(--mute);font-size:.92rem;margin:-.4rem 0 .9rem">This permanently deletes <b>@${esc(who())}</b> and its cloud backup. The data on this device stays.</div><input id="dp" type="password" placeholder="Confirm your password" autocomplete="current-password">${c.total?`<label class="tog"><div><b>Also delete my shared recipes</b><div class="s">Removes the ${c.unused} of your ${c.total} shared recipe${c.total>1?'s':''} that nobody else has saved. The others stay, with your name removed.</div></div><input type="checkbox" id="ds"></label>`:''}<div class="err" id="er"></div><button class="danger" id="d1" style="width:100%">Continue</button>`);
+  const sh=sheet(`<h3>Delete account</h3><div style="color:var(--mute);font-size:.92rem;margin:-.4rem 0 .9rem">This permanently deletes <b>@${esc(who())}</b> and its cloud backup. The data on this device stays.</div><input id="dp" type="password" placeholder="Confirm your password" autocomplete="current-password">${c.total?`<label class="tog"><div><b>Also delete my shared recipes</b><div class="s">Removes the ${c.unused} of your ${c.total} shared recipe${c.total>1?'s':''} that nobody else has saved. The others stay, with your name removed.</div></div><input type="checkbox" class="sw" id="ds"></label>`:''}<div class="err" id="er"></div><button class="danger" id="d1" style="width:100%">Continue</button>`);
   sh.el.onclick=async e=>{
     const b=e.target.closest('button');if(!b||b.id!=='d1')return;
     const pw=sh.q('#dp').value,er=sh.q('#er'),flag=!!sh.q('#ds')?.checked;er.textContent='';
@@ -402,42 +459,51 @@ async function deleteFlow(){
 // First launch: a short, friendly tour with a back button and swipe. Resolves when the user is ready.
 function welcome(){
   return new Promise(res=>{
-    const info=[['🗓️','Plan your week','Put breakfast, lunch and dinner on a calendar. Prepd does the maths.'],
-      ['🧺','Your kitchen keeps count','Eat a meal and your pantry updates. Running low? It lands on your grocery list as whole packs.'],
-      ['⏱️','Cook with confidence','Follow recipe steps one by one, with timers built in so nothing burns.']];
-    const acct=cloud.enabled,total=info.length+(acct?1:0);
+    let full=true;                                              // "Full kitchen" is the default; chosen on the second page
+    const acct=cloud.enabled;
+    const P={plan:['🗓️','Plan your week','Put breakfast, lunch and dinner on a calendar.'],
+      kitchen:['🧺','Your kitchen keeps count','Eat a meal and your pantry updates. Running low? It lands on your grocery list as whole packs.'],
+      cook:['⏱️','Cook with confidence','Follow recipe steps one by one, with timers built in so nothing burns.'],
+      list:['🛒','Shop without the fuss','Add what you need and tick it off as you go. Prepd nudges you when it’s grocery time.']};
+    const page=(k,f)=>`<div class="wslide" data-for="${f}"><div class="big">${P[k][0]}</div><h2>${P[k][1]}</h2><p>${P[k][2]}</p></div>`;
     const el=document.createElement('div');el.className='wel';
     el.innerHTML=`<div class="logo"><svg viewBox="0 0 32 32" width="34" height="34"><circle cx="16" cy="18" r="11" fill="#ff4d3d"/><path d="M16 8c-1-3-4-4-6-3 2 0 3 1 3 3-2 0-4 1-5 2 3-1 6 0 8-1 2 1 5 0 8 1-1-1-3-2-5-2 0-2 1-3 3-3-2-1-5 0-6 3z" fill="#2fb36b"/></svg>Prepd</div>
-    <div class="wclip" id="wc"><div class="wtrack" id="wt">${info.map(([e,t,p])=>`<div class="wslide"><div class="big">${e}</div><h2>${t}</h2><p>${p}</p></div>`).join('')}${acct?'<div class="wslide"><div class="big">☁️</div><h2>Make it yours</h2><p>Create an account to back up your data and use Prepd on any device. Or skip it and stay on this device.</p></div>':''}</div></div>
-    <div class="dots" id="wd">${Array.from({length:total},()=>'<i></i>').join('')}</div>
-    <label class="tog" id="wshare" style="display:none"><div><b>Share recipes anonymously</b><div class="s">Helps everyone get more accurate ingredients. No personal info.</div></div><input type="checkbox" id="wsc" checked></label>
+    <div class="wclip" id="wc"><div class="wtrack" id="wt">${page('plan','all')}<div class="wslide" data-for="all"><h2>How do you like to cook?</h2><p>You can change this any time in Settings.</p><div class="opts"><button class="opt on" data-mode="full" aria-pressed="true"><span class="oe">🧺</span><div class="t"><b>Full kitchen</b><div class="s">Pantry, recipe finder and a grocery list that builds itself.</div></div><span class="ob">Recommended</span></button><button class="opt" data-mode="simple" aria-pressed="false"><span class="oe">📝</span><div class="t"><b>Simple planner</b><div class="s">Just a meal plan and a shopping list.</div></div></button></div></div>${page('kitchen','full')}${page('cook','full')}${page('list','simple')}${acct?'<div class="wslide" data-for="all"><div class="big">☁️</div><h2>Make it yours</h2><p>Create an account to back up your data and use Prepd on any device. Or skip it and stay on this device.</p></div>':''}</div></div>
+    <div class="dots" id="wd"></div>
+    <label class="tog" id="wshare" style="display:none"><div><b>Share recipes anonymously</b><div class="s">Helps everyone get more accurate ingredients. No personal info.</div></div><input type="checkbox" class="sw" id="wsc" checked></label>
     <div class="wnav" id="wnav"><button class="g" id="wb">‹ Back</button><button id="wn">Next</button></div>
     <div id="wact" style="display:none"><button id="wcr" style="width:100%;padding:.95rem;font-size:1.05rem">Create my account</button><button class="g" id="wj" style="width:100%;margin-top:.5rem">I already have an account</button><button class="r" id="ws" style="width:100%;margin-top:.2rem">Continue without an account</button></div>`;
     document.body.append(el);let i=0;
+    const slides=()=>[...$('#wt',el).children].filter(c=>!c.hidden);
     const draw=()=>{
+      const all=[...$('#wt',el).children];
+      all.forEach(c=>{c.hidden=c.dataset.for==='full'?!full:c.dataset.for==='simple'?full:false});     // pages that don't apply to the chosen style are skipped
+      const total=slides().length;i=Math.min(i,total-1);
       $('#wt',el).style.transform=`translateX(-${i*100}%)`;
-      [...$('#wd',el).children].forEach((d,k)=>d.classList.toggle('on',k===i));
+      $('#wd',el).innerHTML=Array.from({length:total},(_,k)=>`<i class="${k===i?'on':''}"></i>`).join('');
       const last=i===total-1,onAcct=acct&&last;
       $('#wb',el).style.visibility=i?'visible':'hidden';
       $('#wn',el).textContent=last?'Get started':'Next';
       $('#wnav',el).style.display=onAcct?'none':'flex';
       $('#wact',el).style.display=onAcct?'block':'none';
-      $('#wshare',el).style.display=last?'flex':'none';
+      $('#wshare',el).style.display=last&&full?'flex':'none';
     };
     const finish=async()=>{
       await db.appSettings.put({key:'onboarded',value:true});localStorage.setItem('prepd_onboarded','1');
       await db.appSettings.put({key:'cloud_share',value:$('#wsc',el).checked});
-      el.classList.add('out');setTimeout(()=>{el.remove();res()},400);
+      await setKitchen(full);
+      el.classList.add('out');setTimeout(()=>{el.remove();res()},300);
     };
-    const go=n=>{i=Math.max(0,Math.min(total-1,n));draw()};
+    const go=n=>{i=Math.max(0,Math.min(slides().length-1,n));draw()};
     el.onclick=e=>{const b=e.target.closest('button');if(!b)return;
-      if(b.id==='wn')i<total-1?go(i+1):finish();
+      if(b.dataset.mode){full=b.dataset.mode==='full';el.querySelectorAll('.opt').forEach(o=>{const on=o===b;o.classList.toggle('on',on);o.setAttribute('aria-pressed',on)});draw();return}
+      if(b.id==='wn')i<slides().length-1?go(i+1):finish();
       if(b.id==='wb')go(i-1);
       if(b.id==='ws')finish();
       if(b.id==='wcr')authSheet('signup',{done:()=>finish()});
       if(b.id==='wj')authSheet('signin',{fresh:true,done:(md,restored)=>restored?location.reload():finish()})};
     let x0=null;const clip=$('#wc',el);                       // swipe left / right
-    clip.onpointerdown=e=>{x0=e.clientX};
+    clip.onpointerdown=e=>{if(e.target.closest('.opt'))return;x0=e.clientX};
     clip.onpointerup=e=>{if(x0==null)return;const dx=e.clientX-x0;x0=null;if(Math.abs(dx)>50)go(i+(dx<0?1:-1))};
     draw();
   });
@@ -452,18 +518,19 @@ async function renderGrocery(){
   const g=await db.groceryList.toArray();head('Grocery',g.length?`${g.length} to buy`:'');
   const row=i=>{
     const t=groceryText(i),food=i.food!==false;
-    return `<div class="row" data-row="${i.id}"><button class="chk" data-buy="${i.id}" aria-label="Mark ${esc(i.name)} bought"></button><span class="em sm">${food?emojiFor(i.name):'🛍️'}</span><div class="t"><b>${esc(t.title)}</b><div class="s">${esc(t.sub)}</div>${i.auto?'':`<button class="tag" data-food="${i.id}">${food?'🧺 Goes to pantry':'🧻 Not food · stays off pantry'}</button>`}</div><button class="r" data-x="${i.id}" style="padding:.4rem">✕</button></div>`};
-  m.innerHTML=(g.length?g.map(row).join(''):'<div class="empty" data-e="🛒"><b>Nothing to buy</b>Meals you plan add missing ingredients here.</div>')+'<button class="fab" data-new aria-label="Add item">+</button>';
+    return `<div class="row" data-row="${i.id}"><button class="chk" data-buy="${i.id}" aria-label="Mark ${esc(i.name)} bought"></button><span class="em sm">${emojiFor(i.name,food?'🥘':'🛍️')}</span><div class="t"><b>${esc(t.title)}</b>${i.basic?(i.note?`<div class="s">${esc(i.note)}</div>`:''):`<div class="s">${esc(t.sub)}</div>`}${i.auto||i.basic||!KITCHEN?'':`<button class="tag" data-food="${i.id}">${food?'🧺 Goes to pantry':'🧻 Not food · stays off pantry'}</button>`}</div><button class="r" data-x="${i.id}" style="padding:.4rem">✕</button></div>`};
+  m.innerHTML=(g.length?g.map(row).join(''):`<div class="empty" data-e="🛒"><b>Nothing to buy</b>${KITCHEN?'Meals you plan add missing ingredients here.':'Tap + to add what you need.'}</div>`)+'<button class="fab" data-new aria-label="Add item">+</button>';
   m.onclick=async e=>{const b=e.target.closest('button');if(!b)return;const d=b.dataset;
     if(d.food){                                           // the user corrects the food / not-food guess; it is remembered
       const it=await db.groceryList.get(+d.food),now=!(it.food!==false);
       await db.groceryList.update(it.id,{food:now});await setOverride(it.name,now);render();return}
     if(d.buy||d.x){const rowEl=$(`[data-row="${d.buy||d.x}"]`);
       if(d.buy){b.classList.add('on');b.textContent='✓';burst(b);await new Promise(r=>setTimeout(r,220));
-        const r=await restockFromGrocery(+d.buy);habits.record('grocery').catch(()=>{});toast(r&&r.pantry===false?'Checked off ✓':'Moved to pantry')}
+        const r=await restockFromGrocery(+d.buy,{skipPantry:!KITCHEN});habits.record('grocery').catch(()=>{});toast(r&&r.pantry===false?'Checked off ✓':'Moved to pantry')}
       else await db.groceryList.delete(+d.x);
       rowEl.classList.add('gone');setTimeout(render,200)}
     if('new'in d){
+      if(!KITCHEN)return basicGrocerySheet();
       const known=await loadKnown();
       const sh=sheet(`<h3>Add to list</h3><input id="nm" placeholder="Name, e.g. milk or napkins" autocomplete="off"><div class="uh" id="fh"></div><div class="f"><input id="q" type="number" inputmode="decimal" placeholder="Amount">${unitSel('u','g')}</div><div class="err" id="er"></div><button id="sv" style="width:100%">Add to list</button>`);
       let t;sh.el.oninput=ev=>{                           // live hint: Prepd works out food vs not food by itself
@@ -491,15 +558,16 @@ async function healPantry(){
 const offline=()=>$('#ob').classList.toggle('on',!navigator.onLine);
 addEventListener('online',offline);addEventListener('offline',offline);
 let gBadge=0;
-const drawNav=()=>{$('#n').innerHTML=[['plan','Plan'],['pantry','Pantry'],['grocery','Grocery'],['settings','Settings']].map(([k,l])=>`<button data-t="${k}" class="${k===tab?'on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>${l}${k==='grocery'&&gBadge?`<span class="bd">${gBadge}</span>`:''}</button>`).join('')};
+const drawNav=()=>{$('#n').innerHTML=[['plan','Plan'],['pantry','Pantry'],['grocery','Grocery'],['settings','Settings']].filter(([k])=>KITCHEN||k!=='pantry').map(([k,l])=>`<button data-t="${k}" class="${k===tab?'on':''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>${l}${k==='grocery'&&gBadge?`<span class="bd">${gBadge}</span>`:''}</button>`).join('')};
 // Opening a link like #checkin (from a reminder) goes straight to that screen.
 function goHash(h){
   const k=String(h||'').replace(/^.*#/,'');
-  if(k==='checkin'){tab='pantry';render().then(()=>checkinSheet())}
+  if(k==='checkin'&&KITCHEN){tab='pantry';render().then(()=>checkinSheet())}
   else if(['plan','pantry','grocery','settings'].includes(k)){tab=k;render()}
 }
 async function render(){
   const t0=performance.now();
+  if(!KITCHEN&&tab==='pantry')tab='plan';
   drawNav();                                   // the tab bar responds immediately
   const [n]=await Promise.all([db.groceryList.count(),({plan:renderPlan,pantry:renderPantry,grocery:renderGrocery,settings:renderSettings}[tab])()]);
   if(n!==gBadge){gBadge=n;drawNav()}
@@ -520,7 +588,7 @@ offline();
   await safeRender();timers.resume();drawTimers();
   if(location.hash)goHash(location.hash);
   // Everything below happens after the first screen is already visible.
-  loadEngine().then(()=>{healPantry().then(c=>c&&render());return syncSoon()});
+  if(KITCHEN)loadEngine().then(()=>{healPantry().then(c=>c&&render());return syncSoon()});   // not needed in simple mode
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&!sheetStack.length){cloud.touchOpen();if(!db.isOpen())db.open().catch(()=>{});safeRender()}});
   cloud.init().then(async ok=>{if(!ok)return;cloud.touchOpen();
     const r=await cloud.pullIfNewer(importUserData);
