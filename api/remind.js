@@ -7,7 +7,8 @@ module.exports=async(req,res)=>{
   const SB=process.env.SUPABASE_URL,KEY=process.env.SUPABASE_SERVICE_ROLE_KEY,secret=process.env.CRON_SECRET;
   const auth=req.headers.authorization===`Bearer ${secret}`||(req.query&&req.query.key===secret);
   if(!secret||!auth)return res.status(401).json({error:'Unauthorized'});
-  if(!SB||!KEY||!process.env.VAPID_PUBLIC_KEY||!process.env.VAPID_PRIVATE_KEY)return res.status(500).json({error:'Reminders are not configured (see api/remind.js).'});
+  const missing=['SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','VAPID_PUBLIC_KEY','VAPID_PRIVATE_KEY'].filter(k=>!process.env[k]);   // names only, never values
+  if(missing.length)return res.status(500).json({error:'Reminders are not configured yet.',missing,hint:'Add these in Vercel → Settings → Environment Variables (tick Production), then redeploy.'});
   const dry=req.query&&req.query.dry==='1';
   const H={apikey:KEY,Authorization:`Bearer ${KEY}`,'Content-Type':'application/json'};
   const rest=async(path,o={})=>{
