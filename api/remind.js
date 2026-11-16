@@ -4,7 +4,7 @@
 // Manual test: /api/remind?key=<CRON_SECRET>&dry=1 shows what it would do without sending anything.
 const webpush=require('web-push');
 module.exports=async(req,res)=>{
-  const SB=process.env.SUPABASE_URL,KEY=process.env.SUPABASE_SERVICE_ROLE_KEY,secret=process.env.CRON_SECRET;
+  const SB=process.env.SUPABASE_URL,KEY=process.env.SUPABASE_SECRET_KEY||process.env.SUPABASE_SERVICE_ROLE_KEY,secret=process.env.CRON_SECRET;
   const auth=req.headers.authorization===`Bearer ${secret}`||(req.query&&req.query.key===secret);
   if(!secret||!auth)return res.status(401).json({error:'Unauthorized'});
   const missing=['SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','VAPID_PUBLIC_KEY','VAPID_PRIVATE_KEY'].filter(k=>!process.env[k]);   // names only, never values
