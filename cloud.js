@@ -36,7 +36,7 @@ export function init(){
   return ready||(ready=(async()=>{
     try{
       lastError='';
-      const {createClient}=await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm');
+      const {createClient}=await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.58.0/+esm');
       sb=createClient(cfg.SUPABASE_URL,cfg.SUPABASE_ANON_KEY,{auth:{persistSession:true,autoRefreshToken:true}});
       const {data:{session}}=await sb.auth.getSession();
       if(session&&session.user.is_anonymous)await sb.auth.signOut({scope:'local'});   // left over from the old device-id sign-in
