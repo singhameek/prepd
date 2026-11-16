@@ -10,7 +10,7 @@ module.exports=async(req,res)=>{
   const missing=['SUPABASE_URL','SUPABASE_SERVICE_ROLE_KEY','VAPID_PUBLIC_KEY','VAPID_PRIVATE_KEY'].filter(k=>!process.env[k]);   // names only, never values
   if(missing.length)return res.status(500).json({error:'Reminders are not configured yet.',missing,hint:'Add these in Vercel → Settings → Environment Variables (tick Production), then redeploy.'});
   const dry=req.query&&req.query.dry==='1';
-  const H={apikey:KEY,Authorization:`Bearer ${KEY}`,'Content-Type':'application/json'};
+  const H={apikey:KEY,'Content-Type':'application/json'};
   const rest=async(path,o={})=>{
     const r=await fetch(`${SB}/rest/v1/${path}`,{...o,headers:{...H,...(o.headers||{})}});
     if(!r.ok)throw new Error(`${path.split('?')[0]} ${r.status}`);
